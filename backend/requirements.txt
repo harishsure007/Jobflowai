@@ -1,0 +1,21 @@
+flask
+flask-cors
+
+
+# Web framework
+fastapi>=0.110
+
+# ASGI server to run FastAPI
+uvicorn[standard]>=0.23
+
+# Database stack
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9    # use for local/dev; swap to psycopg2 in prod if you prefer
+
+# Env loader (you already use .env)
+python-dotenv>=1.0
+
+# (Optional but nice) Migrations later
+alembic>=1.13
+
+email-validator
