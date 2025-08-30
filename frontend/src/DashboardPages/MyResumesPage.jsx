@@ -1,6 +1,68 @@
 // src/DashboardPages/MyResumesPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import api, { API_BASE } from "../lib/api";
+import { saveAs } from "file-saver";
+import { Document, Packer, Paragraph } from "docx";
+import jsPDF from "jspdf";
+
+// ---------- tiny dropdown component ----------
+function useClickAway(closeFn) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target)) closeFn?.();
+    };
+    const onKey = (e) => e.key === "Escape" && closeFn?.();
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [closeFn]);
+  return ref;
+}
+
+function Dropdown({ label, buttonStyle, children, align = "left", title }) {
+  const [open, setOpen] = useState(false);
+  const ref = useClickAway(() => setOpen(false));
+  return (
+    <div ref={ref} style={styles.dropdownWrap}>
+      <button
+        type="button"
+        title={title}
+        onClick={() => setOpen((s) => !s)}
+        style={{ ...styles.btnBase, ...buttonStyle }}
+      >
+        {label}
+      </button>
+      {open && (
+        <div
+          style={{
+            ...styles.menu,
+            left: align === "left" ? 0 : "auto",
+            right: align === "right" ? 0 : "auto",
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ onClick, children, danger = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{ ...styles.menuItem, ...(danger ? styles.menuItemDanger : null) }}
+    >
+      {children}
+    </button>
+  );
+}
 
 // Single item + mutate (resume-specific)
 const RESUME_GET_URL = (id) => `${API_BASE}/api/v1/resume/${id}`;
@@ -34,15 +96,62 @@ const normalize = (it) => ({
   doc_type: getDocType(it),
 });
 
+// ---------- helpers: filenames + exporters ----------
+const safeName = (t, ext) =>
+  `${(t || "document").toString().trim().replace(/[\/\\?%*:|"<>]/g, "").replace(/\s+/g, "_") || "document"}.${ext}`;
+
+const downloadDOCX = async (title, content) => {
+  const text = content || "";
+  const paragraphs = (text ? text.split(/\r?\n/) : [""]).map(
+    (line) => new Paragraph({ text: line })
+  );
+  const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
+  const blob = await Packer.toBlob(doc);
+  saveAs(blob, safeName(title || "resume", "docx"));
+};
+
+const downloadPDF = (title, content) => {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const left = 48, top = 56, lineHeight = 16;
+  const pageH = doc.internal.pageSize.getHeight();
+  const maxW = doc.internal.pageSize.getWidth() - left * 2;
+  const lines = (content || "").split(/\r?\n/);
+  let y = top;
+  doc.setFont("Times", "Normal");
+  doc.setFontSize(12);
+
+  const write = (t) => {
+    const wrapped = doc.splitTextToSize(t, maxW);
+    for (const wl of wrapped) {
+      if (y + lineHeight > pageH - top) {
+        doc.addPage(); y = top;
+      }
+      doc.text(wl, left, y);
+      y += lineHeight;
+    }
+  };
+
+  lines.forEach((ln, i) => {
+    if (ln.trim() === "" && i !== 0) {
+      y += lineHeight;
+      if (y > pageH - top) { doc.addPage(); y = top; }
+    } else {
+      write(ln);
+    }
+  });
+
+  doc.save(safeName(title || "resume", "pdf"));
+};
+
 export default function MyResumesPage() {
-  const [resumes, setResumes] = useState([]); // raw items from API (normalized)
+  const [resumes, setResumes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState("");
 
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [tagFilter, setTagFilter] = useState("all");
-  const [docFilter, setDocFilter] = useState("resumes"); // 'resumes' | 'covers' | 'all'
+  const [docFilter, setDocFilter] = useState("resumes");
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState(null);
@@ -123,7 +232,7 @@ export default function MyResumesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ------- helpers -------
+  // ------- preview helpers -------
   const openPreview = async (item) => {
     setPreviewError("");
     setPreviewLoading(true);
@@ -132,8 +241,6 @@ export default function MyResumesPage() {
 
     try {
       if (!item?.content) {
-        // NOTE: This page is resume-focused; if you later allow covers here,
-        // you'll need a COVER_GET_URL when getDocType(item) === "cover".
         const { data } = await api.get(RESUME_GET_URL(item.id));
         const content =
           data?.content ?? data?.text ?? data?.raw_text ?? data?.body ?? "";
@@ -243,14 +350,11 @@ export default function MyResumesPage() {
   // ------- filter + sort -------
   const filteredSorted = useMemo(() => {
     const q = query.trim().toLowerCase();
-
     let list = resumes;
 
-    // doc type filter (default: show resumes only)
     if (docFilter === "resumes") list = list.filter((r) => getDocType(r) === "resume");
     else if (docFilter === "covers") list = list.filter((r) => getDocType(r) === "cover");
 
-    // tag filter (source)
     list = list.filter((r) => {
       const passTag = tagFilter === "all" ? true : (r.source || "other") === tagFilter;
       if (!passTag) return false;
@@ -290,7 +394,6 @@ export default function MyResumesPage() {
               style={styles.search}
               aria-label="Search resumes"
             />
-            {/* Doc type filter */}
             <select
               value={docFilter}
               onChange={(e) => setDocFilter(e.target.value)}
@@ -302,14 +405,12 @@ export default function MyResumesPage() {
               <option value="covers">Cover Letters</option>
               <option value="all">All</option>
             </select>
-            {/* Source/tag filter */}
             <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} style={styles.select} aria-label="Filter by tag">
               <option value="all">All sources</option>
               <option value="enhancer">Enhancer</option>
               <option value="upload">Upload</option>
               <option value="other">Other</option>
             </select>
-            {/* Sort */}
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={styles.select} aria-label="Sort resumes">
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
@@ -361,17 +462,15 @@ export default function MyResumesPage() {
             const isRenaming = renamingId === r.id;
             return (
               <li key={r.id} style={styles.item}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                   <span style={styles.tag(r.source || "other")}>
                     {(r.source || "other").toUpperCase()}
                   </span>
-                  {/* small badge for clarity if 'All' is selected */}
                   {docFilter === "all" && (
                     <span style={styles.docBadge(getDocType(r))}>
                       {getDocType(r) === "resume" ? "RESUME" : "COVER"}
                     </span>
                   )}
-
                   {isRenaming ? (
                     <>
                       <input
@@ -384,19 +483,52 @@ export default function MyResumesPage() {
                       <button style={styles.smallBtnGhost} onClick={cancelRename}>✖</button>
                     </>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                       <span style={styles.title}>{r.title || "Untitled"}</span>
                       {r.created_at && <span style={styles.date}>{new Date(r.created_at).toLocaleString()}</span>}
                     </div>
                   )}
                 </div>
 
+                {/* compact actions */}
                 <div style={styles.actions}>
-                  <button style={styles.viewBtn} onClick={() => openPreview(r)} title="Quick preview">👁️ View</button>
-                  <button style={styles.downloadBtn} onClick={() => downloadTxt(r.title, r.content)} title="Download as .txt">⬇️ Download</button>
-                  <button style={styles.copyBtn} onClick={() => copyToClipboard(r.content)} title="Copy content">📋 Copy</button>
-                  {!isRenaming && <button style={styles.renameBtn} onClick={() => startRename(r)} title="Rename">✏️ Rename</button>}
-                  <button style={styles.deleteBtn} onClick={() => confirmDelete(r.id)} title="Delete">🗑️ Delete</button>
+                  <button
+                    style={{ ...styles.btnBase, ...styles.viewBtn }}
+                    onClick={() => openPreview(r)}
+                    title="Quick preview"
+                  >
+                    👁️ View
+                  </button>
+
+                  <Dropdown
+                    label="📥 Download ▼"
+                    title="Download as TXT / DOCX / PDF"
+                    buttonStyle={styles.downloadBtn}
+                    align="left"
+                  >
+                    <MenuItem onClick={() => downloadTxt(r.title, r.content)}>📝 TXT</MenuItem>
+                    <MenuItem onClick={() => downloadDOCX(r.title, r.content)}>📃 DOCX</MenuItem>
+                    <MenuItem onClick={() => downloadPDF(r.title, r.content)}>🧾 PDF</MenuItem>
+                  </Dropdown>
+
+                  <Dropdown
+                    label="⋯ More"
+                    title="More actions"
+                    buttonStyle={styles.moreBtn}
+                    align="right"
+                  >
+                    {/* Rename always visible: shows Rename OR Save/Cancel depending on state */}
+                    {!isRenaming ? (
+                      <MenuItem onClick={() => startRename(r)}>✏️ Rename</MenuItem>
+                    ) : (
+                      <>
+                        <MenuItem onClick={applyRename}>✅ Save name</MenuItem>
+                        <MenuItem onClick={cancelRename}>✖ Cancel rename</MenuItem>
+                      </>
+                    )}
+                    <MenuItem onClick={() => copyToClipboard(r.content)}>📋 Copy</MenuItem>
+                    <MenuItem danger onClick={() => confirmDelete(r.id)}>🗑️ Delete</MenuItem>
+                  </Dropdown>
                 </div>
               </li>
             );
@@ -424,14 +556,11 @@ export default function MyResumesPage() {
               )}
             </div>
             <div style={styles.modalFooter}>
-              <button
-                style={styles.primary}
-                onClick={() => downloadTxt(previewItem.title, previewItem.content)}
-                disabled={previewLoading || !!previewError}
-                title={previewLoading ? "Please wait…" : "Download as TXT"}
-              >
-                ⬇️ Download TXT
-              </button>
+              <Dropdown label="📥 Download ▼" buttonStyle={styles.downloadBtn}>
+                <MenuItem onClick={() => downloadTxt(previewItem.title, previewItem.content)}>📝 TXT</MenuItem>
+                <MenuItem onClick={() => downloadDOCX(previewItem.title, previewItem.content)}>📃 DOCX</MenuItem>
+                <MenuItem onClick={() => downloadPDF(previewItem.title, previewItem.content)}>🧾 PDF</MenuItem>
+              </Dropdown>
               <button style={styles.secondary} onClick={closePreview}>Close</button>
             </div>
           </div>
@@ -442,17 +571,22 @@ export default function MyResumesPage() {
 }
 
 const styles = {
+  // layout
   page: { fontFamily: "Segoe UI, sans-serif", backgroundColor: "#fdf6ec", minHeight: "100vh", padding: "40px", display: "flex", justifyContent: "center" },
   card: { backgroundColor: "#fff", padding: "30px", borderRadius: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.1)", width: "100%", maxWidth: "980px" },
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 },
   header: { margin: 0, fontSize: "1.8rem", color: "#333" },
   tools: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+
+  // controls
   search: { padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8, minWidth: 220 },
   select: { padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8 },
   reloadBtn: { padding: "8px 10px", background: "#0f172a", color: "#fff", border: "1px solid #0f172a", borderRadius: 8, cursor: "pointer" },
+
+  // list + items
   errorBox: { background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "10px 12px", borderRadius: 8, margin: "8px 0 16px" },
   list: { listStyle: "none", padding: 0, margin: 0 },
-  item: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid #eee", gap: 10 },
+  item: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid #eee", gap: 12 },
   tag: (src) => ({
     fontSize: 11, padding: "2px 8px", borderRadius: 999,
     background: src === "enhancer" ? "#def7ec" : src === "upload" ? "#e0e7ff" : "#fef3c7",
@@ -460,32 +594,60 @@ const styles = {
     border: src === "enhancer" ? "1px solid #a7f3d0" : src === "upload" ? "1px solid #c7d2fe" : "1px solid #fde68a",
   }),
   docBadge: (kind) => ({
-    fontSize: 10,
-    padding: "2px 6px",
-    borderRadius: 6,
-    border: "1px solid #ddd",
-    background: kind === "resume" ? "#eef2ff" : "#fff7ed",
-    color: "#334155",
+    fontSize: 10, padding: "2px 6px", borderRadius: 6, border: "1px solid #ddd",
+    background: kind === "resume" ? "#eef2ff" : "#fff7ed", color: "#334155",
   }),
-  title: { fontWeight: 600 },
+  title: { fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 420 },
   date: { fontSize: "0.85rem", color: "#777" },
-  actions: { display: "flex", gap: 8, flexWrap: "wrap" },
-  viewBtn: { backgroundColor: "#10b981", color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
-  downloadBtn: { backgroundColor: "#0078D4", color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
-  copyBtn: { backgroundColor: "#6366f1", color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
-  renameBtn: { backgroundColor: "#f59e0b", color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
-  deleteBtn: { backgroundColor: "#ef4444", color: "#fff", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
+
+  // actions
+  actions: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+  btnBase: { border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer" },
+  viewBtn: { backgroundColor: "#10b981", color: "#fff" },
+  downloadBtn: { backgroundColor: "#2563eb", color: "#fff" },
+  moreBtn: { backgroundColor: "#6b7280", color: "#fff" },
+
+  // dropdown
+  dropdownWrap: { position: "relative", display: "inline-block" },
+  menu: {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    minWidth: 160,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
+    padding: 6,
+    zIndex: 50,
+  },
+  menuItem: {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    background: "transparent",
+    border: "none",
+    borderRadius: 8,
+    padding: "8px 10px",
+    cursor: "pointer",
+    color: "#111827",
+  },
+  menuItemDanger: { color: "#dc2626" },
+
+  // rename controls
   renameInput: { padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, minWidth: 220 },
   smallBtn: { backgroundColor: "#10b981", color: "#fff", border: "none", borderRadius: 6, padding: "6px 8px", cursor: "pointer" },
   smallBtnGhost: { backgroundColor: "transparent", color: "#333", border: "1px solid #ccc", borderRadius: 6, padding: "6px 8px", cursor: "pointer" },
+
+  // modal
   modalBackdrop: { position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 1000 },
   modal: { background: "#fff", width: "min(900px, 100%)", borderRadius: 12, boxShadow: "0 10px 30px rgba(0,0,0,.25)", overflow: "hidden", display: "grid", gridTemplateRows: "auto 1fr auto" },
   modalHeader: { padding: "12px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   modalClose: { background: "transparent", border: "1px solid #ddd", borderRadius: 8, padding: "4px 8px", cursor: "pointer" },
   modalBody: { padding: 16, maxHeight: "65vh", overflow: "auto" },
-  pre: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 14, color: "#222" },
+  pre: {
+    margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 14, color: "#222"
+  },
   modalFooter: { borderTop: "1px solid #eee", padding: "10px 16px", display: "flex", justifyContent: "flex-end", gap: 8 },
-  primary: { backgroundColor: "#0078D4", color: "#fff", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer" },
   secondary: { backgroundColor: "transparent", color: "#333", border: "1px solid #ccc", borderRadius: 8, padding: "8px 12px", cursor: "pointer" },
 };
