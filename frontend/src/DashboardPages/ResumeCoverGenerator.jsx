@@ -459,6 +459,13 @@ export default function ResumeCoverGenerator() {
                     >
                       📝 TXT
                     </button>
+
+                    <button
+                      style={styles.ghostBtn}
+                      onClick={() => downloadPDF("generated_cover_letter", coverText)}
+                    >
+                      📄 PDF
+                    </button>
                   </div>
                 </div>
                 <textarea value={coverText} readOnly style={styles.outputArea} />
