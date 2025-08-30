@@ -25,14 +25,17 @@ function normalizeError(errLike) {
     if (Array.isArray(detail)) {
       return detail
         .map((d) => {
-          const loc = d && typeof d === "object" && Array.isArray(d.loc) ? d.loc.join(".") : (d?.loc ?? "");
+          const loc =
+            d && typeof d === "object" && Array.isArray(d.loc)
+              ? d.loc.join(".")
+              : d?.loc ?? "";
           return `${loc || "error"}: ${d?.msg || d?.type || "error"}`;
         })
         .join(" | ");
     }
     if (detail && typeof detail === "object") {
       if (detail.msg) {
-        const loc = Array.isArray(detail.loc) ? detail.loc.join(".") : (detail.loc ?? "");
+        const loc = Array.isArray(detail.loc) ? detail.loc.join(".") : detail.loc ?? "";
         return `${loc || "error"}: ${detail.msg}`;
       }
       try {
@@ -63,6 +66,7 @@ function emptyProfile() {
     projects: [],
     education: [],
     certifications: [],
+    // extras_text kept in state, but not shown in UI
     extras_text: "",
   };
 }
@@ -76,7 +80,7 @@ function safeJSONString(obj) {
 }
 
 function normalizeIncoming(raw) {
-  const d = raw?.profile ? raw.profile : (raw || {});
+  const d = raw?.profile ? raw.profile : raw || {};
   const extrasGuess = d?.extras ?? d?.meta ?? undefined;
   return {
     id: d?.id ?? null,
@@ -88,18 +92,20 @@ function normalizeIncoming(raw) {
     github: d?.github || "",
     portfolio: d?.portfolio || d?.website || "",
     summary: d?.summary || d?.about || "",
-    skills: Array.isArray(d?.skills) ? d.skills : (extrasGuess?.skills || []),
-    experience: Array.isArray(d?.experience) ? d.experience : (extrasGuess?.experience || []),
-    projects: Array.isArray(d?.projects) ? d.projects : (extrasGuess?.projects || []),
-    education: Array.isArray(d?.education) ? d.education : (extrasGuess?.education || []),
-    certifications: Array.isArray(d?.certifications) ? d.certifications : (extrasGuess?.certifications || []),
+    skills: Array.isArray(d?.skills) ? d.skills : extrasGuess?.skills || [],
+    experience: Array.isArray(d?.experience) ? d.experience : extrasGuess?.experience || [],
+    projects: Array.isArray(d?.projects) ? d.projects : extrasGuess?.projects || [],
+    education: Array.isArray(d?.education) ? d.education : extrasGuess?.education || [],
+    certifications: Array.isArray(d?.certifications) ? d.certifications : extrasGuess?.certifications || [],
     extras_text: extrasGuess ? safeJSONString(extrasGuess) : "",
   };
 }
 
+/* ======= send arrays BOTH at top-level and inside extras (compat) ======= */
 function toPayload(fIn) {
   const f = fIn || {};
-  const trimOrNull = (v) => (typeof v === "string" ? v.trim() : v == null ? null : String(v).trim());
+  const trimOrNull = (v) =>
+    typeof v === "string" ? v.trim() : v == null ? null : String(v).trim();
 
   const base = {
     full_name: trimOrNull(f.full_name) || "",
@@ -113,7 +119,7 @@ function toPayload(fIn) {
     about: typeof f.summary === "string" ? f.summary : null, // compatibility alias
   };
 
-  const extras = {
+  const arrays = {
     skills: Array.isArray(f.skills) ? f.skills : [],
     experience: Array.isArray(f.experience) ? f.experience : [],
     projects: Array.isArray(f.projects) ? f.projects : [],
@@ -121,6 +127,7 @@ function toPayload(fIn) {
     certifications: Array.isArray(f.certifications) ? f.certifications : [],
   };
 
+  const extras = { ...arrays };
   if (typeof f.extras_text === "string" && f.extras_text.trim()) {
     try {
       Object.assign(extras, JSON.parse(f.extras_text));
@@ -129,10 +136,11 @@ function toPayload(fIn) {
     }
   }
 
-  const payload = { ...base, extras };
+  const payload = { ...base, ...arrays, extras };
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
   return payload;
 }
+/* ======================================================================= */
 
 function deriveInitials(name) {
   let n = typeof name === "string" ? name : name == null ? "" : String(name);
@@ -182,12 +190,10 @@ export default function ProfilePage() {
       if (status === 200) {
         setForm(normalizeIncoming(data));
       } else if (status === 204 || data == null || data === "") {
-        // No content/body yet — treat as empty profile
         setForm(emptyProfile());
       } else if (status === 401) {
         setErr("Session expired. Please sign in again.");
       } else if (status === 404) {
-        // Not created yet — let user fill and save
         setForm(emptyProfile());
       } else {
         throw { response: { data } };
@@ -218,7 +224,7 @@ export default function ProfilePage() {
     let lastErr = null;
     for (const c of WRITE_CANDIDATES) {
       try {
-        const { data, status } = await api.request({
+        const { status } = await api.request({
           method: c.method,
           url: c.url,
           data: payload,
@@ -231,17 +237,8 @@ export default function ProfilePage() {
           break;
         }
 
-        if (status === 200 || status === 201) {
-          const saved = data?.profile ? data.profile : data;
-          setWriteEndpoint(`${API_BASE}${c.url}`);
-          setForm(normalizeIncoming(saved || {}));
-          setOk("Profile saved!");
-          setSaving(false);
-          return;
-        }
-
-        if (status === 204) {
-          // Saved but no payload — reload to display current server state
+        if (status === 200 || status === 201 || status === 204) {
+          // Always reload canonical profile after success
           setWriteEndpoint(`${API_BASE}${c.url}`);
           await loadProfile();
           setOk("Profile saved!");
@@ -249,11 +246,7 @@ export default function ProfilePage() {
           return;
         }
 
-        lastErr = new Error(
-          `${c.method.toUpperCase()} ${c.url} -> ${status}: ${normalizeError({
-            response: { data },
-          })}`
-        );
+        lastErr = new Error(`${c.method.toUpperCase()} ${c.url} -> ${status}`);
       } catch (e) {
         lastErr = e;
         break;
@@ -277,7 +270,7 @@ export default function ProfilePage() {
           <div className="pf-avatar" title={form.full_name || "Your name"}>
             {initials || "👤"}
           </div>
-          <div>
+        <div>
             <h1 className="pf-title">My Profile</h1>
             <div className="pf-sub">Edit your details used to auto-generate resumes.</div>
             <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
@@ -297,6 +290,7 @@ export default function ProfilePage() {
       {err && (<div className="pf-error"><strong>Error:</strong> <span>{err}</span></div>)}
       {ok && (<div className="pf-ok"><strong>{ok}</strong></div>)}
 
+      {/* Contact */}
       <section className="pf-card">
         <h2>Contact & Links</h2>
         <div className="grid2">
@@ -310,6 +304,7 @@ export default function ProfilePage() {
         </div>
       </section>
 
+      {/* Summary */}
       <section className="pf-card">
         <h2>Professional Summary</h2>
         <Textarea
@@ -320,6 +315,7 @@ export default function ProfilePage() {
         />
       </section>
 
+      {/* Skills */}
       <section className="pf-card">
         <h2>Skills <span className="hint">(press Enter to add)</span></h2>
         <Chips
@@ -329,6 +325,7 @@ export default function ProfilePage() {
         />
       </section>
 
+      {/* Experience */}
       <section className="pf-card">
         <h2>Experience</h2>
         <List
@@ -341,7 +338,11 @@ export default function ProfilePage() {
               <Input label="Start" value={item.start || ""} onChange={(v) => update({ ...item, start: v })} placeholder="2022-05 or May 2022" />
               <Input label="End" value={item.end || ""} onChange={(v) => update({ ...item, end: v })} placeholder="Present or 2024-08" />
               <Input label="Location" value={item.location || ""} onChange={(v) => update({ ...item, location: v })} />
-              <Bullets label="Impact bullets" value={Array.isArray(item.bullets) ? item.bullets : []} onChange={(v) => update({ ...item, bullets: v })} />
+              <Bullets
+                label="Impact bullets"
+                value={Array.isArray(item.bullets) ? item.bullets : []}
+                onChange={(v) => update({ ...item, bullets: v })}
+              />
               <div className="row-right span2">
                 <button className="btn danger ghost" onClick={remove}>Remove role</button>
               </div>
@@ -351,6 +352,7 @@ export default function ProfilePage() {
         />
       </section>
 
+      {/* Projects */}
       <section className="pf-card">
         <h2>Projects</h2>
         <List
@@ -359,8 +361,17 @@ export default function ProfilePage() {
           renderItem={(item, idx, update, remove) => (
             <div className="grid2">
               <Input label="Name" value={item.name || ""} onChange={(v) => update({ ...item, name: v })} required />
-              <Chips label="Stack / tags" value={Array.isArray(item.stack) ? item.stack : []} onChange={(v) => update({ ...item, stack: v })} placeholder="e.g., Java, Spring Boot, Kafka" />
-              <Bullets label="Highlights" value={Array.isArray(item.bullets) ? item.bullets : []} onChange={(v) => update({ ...item, bullets: v })} />
+              <Chips
+                label="Stack / tags"
+                value={Array.isArray(item.stack) ? item.stack : []}
+                onChange={(v) => update({ ...item, stack: v })}
+                placeholder="e.g., React, Node, SQL"
+              />
+              <Bullets
+                label="Highlights"
+                value={Array.isArray(item.bullets) ? item.bullets : []}
+                onChange={(v) => update({ ...item, bullets: v })}
+              />
               <div className="row-right span2">
                 <button className="btn danger ghost" onClick={remove}>Remove project</button>
               </div>
@@ -370,6 +381,7 @@ export default function ProfilePage() {
         />
       </section>
 
+      {/* Education */}
       <section className="pf-card">
         <h2>Education</h2>
         <List
@@ -380,7 +392,11 @@ export default function ProfilePage() {
               <Input label="Degree" value={item.degree || ""} onChange={(v) => update({ ...item, degree: v })} required />
               <Input label="School" value={item.school || ""} onChange={(v) => update({ ...item, school: v })} required />
               <Input label="Year" value={item.year || ""} onChange={(v) => update({ ...item, year: v })} />
-              <Bullets label="Details" value={Array.isArray(item.details) ? item.details : []} onChange={(v) => update({ ...item, details: v })} />
+              <Bullets
+                label="Details"
+                value={Array.isArray(item.details) ? item.details : []}
+                onChange={(v) => update({ ...item, details: v })}
+              />
               <div className="row-right span2">
                 <button className="btn danger ghost" onClick={remove}>Remove education</button>
               </div>
@@ -390,6 +406,7 @@ export default function ProfilePage() {
         />
       </section>
 
+      {/* Certifications */}
       <section className="pf-card">
         <h2>Certifications</h2>
         <List
@@ -409,22 +426,7 @@ export default function ProfilePage() {
         />
       </section>
 
-      <section className="pf-card">
-        <h2>Extras (optional)</h2>
-        <Textarea
-          value={form.extras_text}
-          onChange={(v) => setForm((f) => ({ ...f, extras_text: v }))}
-          placeholder="Any custom JSON-like notes you want to pass to the generator (kept as text)."
-          rows={4}
-        />
-      </section>
-
-      <footer className="pf-footer">
-        <button className="btn ghost" onClick={() => navigate(-1)}>Cancel</button>
-        <button className="btn" onClick={saveProfile} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </footer>
+      {/* (No Extras section; no bottom footer) */}
     </div>
   );
 }
@@ -498,11 +500,14 @@ function Chips({ label, value, onChange, placeholder }) {
   );
 }
 
+/* ==== Bullets: Input + Add button + removable list (preserves spaces) ==== */
 function Bullets({ label, value, onChange }) {
-  const [text, setText] = useState("");
   const items = Array.isArray(value) ? value : [];
+  const [text, setText] = useState("");
+
   function add() {
-    const t = text.trim();
+    // Only trim ends; keep inner spaces exactly as typed
+    const t = (text ?? "").replace(/\r?\n/g, " ").trim();
     if (!t) return;
     onChange && onChange([...(items || []), t]);
     setText("");
@@ -510,9 +515,11 @@ function Bullets({ label, value, onChange }) {
   function remove(i) {
     onChange && onChange(items.filter((_, idx) => idx !== i));
   }
+
   return (
     <div className="bullets span2">
       <div className="chips-label">{label || "Bullets"}</div>
+
       <div className="bullets-list">
         {(items || []).map((b, i) => (
           <div key={i} className="bullet-item">
@@ -521,18 +528,26 @@ function Bullets({ label, value, onChange }) {
           </div>
         ))}
       </div>
+
       <div className="bullets-add">
         <input
           className="pf-input"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Add a quantified impact bullet and press Add"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add a quantified impact bullet and press Add (Enter works too)"
         />
         <button className="btn ghost" onClick={add}>Add</button>
       </div>
     </div>
   );
 }
+/* ======================================================================= */
 
 function List({ items, onChange, renderItem, makeNew }) {
   const arr = Array.isArray(items) ? items : [];
@@ -573,24 +588,32 @@ const styles = `
   .pf-sub { font-size:12px; color:#666; }
   .pf-actions { display:flex; gap:8px; }
 
+  :root, *, *::before, *::after { box-sizing: border-box; }
+  body { line-height: 1.35; }
   .pf-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin:12px 0; }
-  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-  .span2 { grid-column: span 2; }
 
-  .pf-label { display:flex; flex-direction:column; gap:4px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
+  .span2 { grid-column: 1 / -1; }
+  .grid2 > * { min-width: 0; }
+
+  .pf-label { display:flex; flex-direction:column; gap:4px; min-width:0; }
   .pf-label > span { font-size:12px; color:#555; }
   .pf-input, .pf-textarea { width:100%; border:1px solid #d1d5db; border-radius:8px; padding:10px; font-size:14px; }
   .pf-textarea { min-height: 100px; }
 
-  .chips { display:flex; flex-direction:column; gap:6px; }
+  .chips { display:flex; flex-direction:column; gap:6px; min-width:0; }
   .chips-label { font-size:12px; color:#555; }
   .chips-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .chips-input { border:1px solid #d1d5db; border-radius:999px; padding:8px 12px; min-width: 240px; }
+  .chips-input { border:1px solid #d1d5db; border-radius:999px; padding:8px 12px; flex:1 1 160px; min-width:0; }
+
   .chip { background:#e0ecf4; color:#1f3b4d; padding:6px 10px; border-radius:999px; cursor:pointer; user-select:none; }
 
-  .bullets { display:flex; flex-direction:column; gap:8px; }
-  .bullets-list { display:flex; flex-direction:column; gap:6px; }
+  /* Bullets block spacing so it doesn't touch neighbors */
+  .bullets { display:flex; flex-direction:column; gap:10px; }
+  .bullets-list { display:flex; flex-direction:column; gap:6px; margin-top: 2px; }
   .bullet-item { display:flex; align-items:center; justify-content:space-between; gap:8px; background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:8px 10px; }
+  .bullets-add { display:flex; gap:8px; align-items:center; margin-top: 6px; }
+  .bullets-add .pf-input { flex: 1 1 auto; }
 
   .list { display:flex; flex-direction:column; gap:12px; }
   .list-item { background:#fbfbfb; border:1px solid #f0f2f5; border-radius:10px; padding:12px; }
@@ -607,4 +630,9 @@ const styles = `
 
   .pf-error { background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; padding:10px 12px; border-radius:8px; margin: 8px 0; }
   .pf-ok { background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; padding:10px 12px; border-radius:8px; margin: 8px 0; }
+
+  @media (max-width: 980px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .span2 { grid-column: 1 / -1; }
+  }
 `;
