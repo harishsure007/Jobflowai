@@ -5,15 +5,13 @@ import os
 import re
 import textwrap
 import datetime as _dt
-from typing import Optional, Literal, Any
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Header
-from pydantic import BaseModel, Field, AliasChoices
-from pydantic.config import ConfigDict
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models import Profile, User  # adjust import paths if your project differs
+from backend.database import get_db, SessionLocal
+from backend.models import Profile, User, Resume
 
 # =========================
 #   BLANK-LINE NORMALIZER
@@ -42,7 +40,6 @@ except Exception as e:
 
 JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY")
 JWT_ALGO = os.getenv("JWT_ALGO", "HS256")
-
 if not JWT_SECRET:
     # Fail fast with a clear error so you don't debug 401s forever
     raise RuntimeError("JWT_SECRET (or SECRET_KEY) is missing in environment variables.")
@@ -79,22 +76,66 @@ def get_current_user(
 
     return user
 
+# ⬇️ Optional auth for PUBLIC generator (lazy; no DB unless token present)
+def get_optional_user(
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> Optional[User]:
+    """
+    Return User if a valid Bearer token is present; otherwise None.
+    Never raises—keeps /resume-cover public. Opens a DB session ONLY when a token exists.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+
+    token = authorization.split()[1].strip()
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except Exception:
+        return None
+
+    user_id = payload.get("sub") or payload.get("user_id")
+    email = payload.get("email")
+
+    db = SessionLocal()
+    try:
+        user: Optional[User] = None
+        if user_id is not None:
+            try:
+                user = db.query(User).filter(User.id == int(user_id)).first()
+            except Exception:
+                user = None
+        if not user and email:
+            user = db.query(User).filter(User.email == email).first()
+        return user
+    finally:
+        db.close()
+
 # =========================
 #   OPTIONAL OPENAI CLIENT
 # =========================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+USE_AI = bool(OPENAI_API_KEY)  # only try remote if key is present
+
 try:
     from openai import OpenAI
     _openai_available = True
 except Exception:
     _openai_available = False
+    USE_AI = False
 
 def _openai_client() -> Optional[Any]:
-    if not (OPENAI_API_KEY and _openai_available):
+    if not (USE_AI and _openai_available):
         return None
-    return OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        return OpenAI(api_key=OPENAI_API_KEY)
+    except Exception:
+        return None
 
 def _call_openai(system_prompt: str, user_prompt: str) -> str:
+    """
+    Calls OpenAI if available; otherwise uses a local fallback.
+    Any exception falls back to local.
+    """
     client = _openai_client()
     if not client:
         return _local_fallback(system_prompt, user_prompt)
@@ -143,9 +184,8 @@ def _local_fallback(system_prompt: str, user_prompt: str) -> str:
         ## Education
         Degree — School | Year
         """).strip()
-        return (contact + "\n\n" + body).strip()
+        return (contact + ("\n\n" + body if body else "")).strip()
     else:
-        # Use today's date in local fallback too (cover letter)
         today = _dt.date.today().strftime("%B %d, %Y")
         name = contact.splitlines()[0].strip() if contact else ""
         body = textwrap.dedent(f"""
@@ -159,120 +199,10 @@ def _local_fallback(system_prompt: str, user_prompt: str) -> str:
         Sincerely,
         {name}
         """).strip()
-        return (contact + "\n\n" + body).strip()
+        return (contact + ("\n\n" + body if body else "")).strip()
 
 # =========================
-#         PROMPTS
-# =========================
-RESUME_SYSTEM = """You are an expert resume writer. Create an ATS-friendly, well-structured resume.
-Use concise bullets with measurable impact. Avoid placeholders. If a CONTACT BLOCK is given,
-use it exactly as-is at the top. Keep formatting clean and readable.
-Never invent employers, dates, or credentials. If unsure, keep it high level and omit specifics.
-"""
-
-RESUME_USER_TMPL = """CONTACT BLOCK
-{CONTACT_BLOCK}
-
-ROLE / FOCUS
-{role_or_target}
-
-GUIDANCE (optional from user/job posting)
-{guidance}
-
-OUTPUT RULES
-- Put the CONTACT BLOCK at the very top, unchanged.
-- Do not reprint the contact block; use it once at the very top.
-- Use sections like: Professional Summary, Core Skills, Experience, Projects, Education, Certifications, Links (only if provided).
-- Quantify achievements with metrics where plausible.
-- Avoid any placeholder like "Your Name", "you@example.com", "City, ST".
-"""
-
-COVER_SYSTEM = """You are an expert cover letter writer. Create a tailored, one-page cover letter
-with a professional tone. Avoid placeholders. If a CONTACT BLOCK is given, place it at top.
-Never invent employers, dates, or credentials. If unsure, keep it high level and omit specifics.
-"""
-
-# NOTE: include a {TODAY} placeholder so OpenAI versions also stamp today's date.
-COVER_USER_TMPL = """CONTACT BLOCK
-{CONTACT_BLOCK}
-
-{TODAY}
-
-TARGET ROLE / COMPANY
-Role: {role_or_target}
-Company (if known): {company}
-
-GUIDANCE (optional from user/job posting)
-{guidance}
-
-OUTPUT RULES
-- Start with the contact block (unchanged), then date ({TODAY}), then greeting (avoid "To Whom It May Concern" if any name/company provided).
-- Do not reprint the contact block; use it once at the very top.
-- 3–5 short paragraphs. Show relevant achievements with metrics.
-- Close with a short, confident sign-off using the name from the contact block.
-- No placeholders like "Your Name".
-"""
-
-# =========================
-#         SCHEMAS
-# =========================
-DocType = Literal["resume", "cover", "both", "auto"]
-
-class GenerateRequest(BaseModel):
-    """
-    Accept both snake_case and camelCase (and common variants) from clients.
-    Unknown/extra fields are ignored to avoid 422s from harmless UI props.
-    """
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-
-    doc_type: DocType = Field(
-        "both",
-        description="resume|cover|both|auto",
-        validation_alias=AliasChoices(
-            "doc_type", "docType", "type", "documentType"
-        ),
-    )
-    role_or_target: str = Field(
-        ...,
-        min_length=2,
-        description="Target role, e.g., 'Data Analyst'",
-        validation_alias=AliasChoices(
-            "role_or_target", "roleOrTarget", "role", "targetRole",
-            "target", "position", "jobTitle", "title"
-        ),
-    )
-    guidance: Optional[str] = Field(
-        default=None,
-        description="Extra info or pasted JD",
-        validation_alias=AliasChoices(
-            "guidance", "jobDescription", "jd", "notes", "summary"
-        ),
-    )
-    company: Optional[str] = Field(
-        default=None,
-        description="Company for cover letter",
-        validation_alias=AliasChoices(
-            "company", "companyName", "employer", "organization", "org"
-        ),
-    )
-    include_contact: bool = Field(
-        default=True,
-        description="Force-include profile contact block at top",
-        validation_alias=AliasChoices(
-            "include_contact", "includeContact", "withContact", "attachContact"
-        ),
-    )
-
-class GenerateResponse(BaseModel):
-    ok: bool
-    doc_type: DocType
-    resume_text: Optional[str] = None
-    cover_text: Optional[str] = None
-    model_used: Optional[str] = None
-    timestamp: str
-
-# =========================
-#   PROFILE → CONTACT BLOCK
+#   PROFILE / CONTACT BLOCK
 # =========================
 def _safe_join(*parts: Optional[str], sep: str = " | ") -> str:
     vals = [p.strip() for p in parts if p and str(p).strip()]
@@ -332,16 +262,10 @@ def _force_contact_on_top(contact_block: str, content: str) -> str:
     body = content.replace(contact_block, "").strip()
     return (contact_block + "\n\n" + body).strip()
 
-# --- De-duplication helpers (prevent repeated header blocks) ---
 def _normalize_inline(s: str) -> str:
     return re.sub(r"\W+", "", s or "").lower()
 
 def _dedupe_contact_block(contact_block: str, content: str) -> str:
-    """
-    After ensuring the contact_block is at the top, remove any immediate
-    second header block that repeats name/phone/email in the next lines.
-    Works even if the model changes casing or reorders name/phone/email.
-    """
     content = content.strip()
     if not contact_block or not content.startswith(contact_block):
         return content
@@ -349,13 +273,12 @@ def _dedupe_contact_block(contact_block: str, content: str) -> str:
     contact_lines = [ln.strip() for ln in contact_block.splitlines() if ln.strip()]
     name = contact_lines[0] if contact_lines else ""
     phone = next((ln for ln in contact_lines if re.search(r"\d", ln)), "")
-    email = next((ln for ln in contact_lines if "@" in ln), "")
+    email = next((ln for ln in contact_block.splitlines() if "@" in ln), "")
 
     body = content[len(contact_block):].lstrip("\n")
     if not body:
         return content
 
-    # look at the first chunk after the top block
     parts = body.split("\n\n", 1)
     head = parts[0]
     tail = parts[1] if len(parts) > 1 else ""
@@ -373,66 +296,172 @@ def _dedupe_contact_block(contact_block: str, content: str) -> str:
 # =========================
 router = APIRouter(tags=["Resume & Cover Generator"])
 
-@router.post("/resume-cover", response_model=GenerateResponse)
+@router.post("/resume-cover")
 def generate_resume_cover(
-    payload: GenerateRequest = Body(...),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    payload: dict = Body(...),            # 👈 accept plain dict to avoid model parsing issues
+    user: Optional[User] = Depends(get_optional_user),  # PUBLIC (no DB dependency)
 ):
     """
-    Generates resume and/or cover text. Automatically injects the user's Profile
-    contact details at the top of each document (no placeholders).
+    Public: Generates resume and/or cover text.
+    If a valid JWT is provided, we inject the user's Profile contact block at top.
+    If no JWT, we skip contact block (avoids placeholders).
     """
-    profile = _fetch_profile(db, user.id)
-    contact_block = _format_contact_block(profile, user) if payload.include_contact else ""
+    try:
+        # Read inputs defensively
+        doc_type = str(payload.get("doc_type", "both")).lower()
+        role = (payload.get("role_or_target")
+                or payload.get("role")
+                or payload.get("targetRole")
+                or payload.get("title")
+                or "").strip()
+        guidance = (payload.get("guidance")
+                    or payload.get("jobDescription")
+                    or payload.get("jd")
+                    or payload.get("notes")
+                    or "").strip()
+        company = (payload.get("company")
+                   or payload.get("companyName")
+                   or payload.get("employer")
+                   or "").strip()
+        include_contact = bool(payload.get("include_contact", True))
 
-    role = payload.role_or_target.strip()
-    guidance = (payload.guidance or "").strip()
-    company = (payload.company or "").strip()
-    today_str = _dt.date.today().strftime("%B %d, %Y")  # for cover date line
+        if not role:
+            raise HTTPException(status_code=422, detail="role_or_target is required")
 
-    resume_text: Optional[str] = None
-    cover_text: Optional[str] = None
-    model_used = os.getenv("DEFAULT_MODEL", "local-fallback" if not _openai_available else "gpt-4o-mini")
+        # Only touch DB if there is an authenticated user AND contact injection is requested
+        profile: Optional[Profile] = None
+        if user and include_contact:
+            db = SessionLocal()
+            try:
+                profile = _fetch_profile(db, user.id)
+            finally:
+                db.close()
 
-    target = payload.doc_type if payload.doc_type != "auto" else "both"
+        contact_block = _format_contact_block(profile, user) if (user and profile and include_contact) else ""
 
-    if target in ("resume", "both"):
-        u_prompt = RESUME_USER_TMPL.format(
-            CONTACT_BLOCK=contact_block,
-            role_or_target=role,
-            guidance=guidance or "(none)"
+        today_str = _dt.date.today().strftime("%B %d, %Y")  # for cover date line
+
+        resume_text: Optional[str] = None
+        cover_text: Optional[str] = None
+
+        # Decide targets
+        target = doc_type if doc_type in ("resume", "cover", "both") else "both"
+
+        # Build prompts and generate text
+        if target in ("resume", "both"):
+            u_prompt = (
+                "CONTACT BLOCK\n"
+                f"{contact_block}\n\n"
+                "ROLE / FOCUS\n"
+                f"{role}\n\n"
+                "GUIDANCE (optional from user/job posting)\n"
+                f"{guidance or '(none)'}\n\n"
+                "OUTPUT RULES\n"
+                "- Put the CONTACT BLOCK at the very top, unchanged.\n"
+                "- Do not reprint the contact block; use it once at the very top.\n"
+                "- Use sections like: Professional Summary, Core Skills, Experience, Projects, Education, Certifications, Links (only if provided).\n"
+                "- Quantify achievements with metrics where plausible.\n"
+                "- Avoid any placeholder like 'Your Name', 'you@example.com', 'City, ST'.\n"
+            )
+            raw = _call_openai(
+                "You are an expert resume writer. Create an ATS-friendly, well-structured resume. "
+                "Use concise bullets with measurable impact. Avoid placeholders. If a CONTACT BLOCK is given, "
+                "use it exactly as-is at the top. Keep formatting clean and readable. "
+                "Never invent employers, dates, or credentials. If unsure, keep it high level and omit specifics.",
+                u_prompt,
+            )
+            resume_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
+            resume_text = _dedupe_contact_block(contact_block, resume_text)
+            resume_text = squeeze_blank_lines(resume_text)
+
+        if target in ("cover", "both"):
+            u_prompt = (
+                "CONTACT BLOCK\n"
+                f"{contact_block}\n\n"
+                f"{today_str}\n\n"
+                "TARGET ROLE / COMPANY\n"
+                f"Role: {role}\n"
+                f"Company (if known): {company or '(not specified)'}\n\n"
+                "GUIDANCE (optional from user/job posting)\n"
+                f"{guidance or '(none)'}\n\n"
+                "OUTPUT RULES\n"
+                f"- Start with the contact block (unchanged), then date ({today_str}), then greeting (avoid generic greetings if any name/company provided).\n"
+                "- Do not reprint the contact block; use it once at the very top.\n"
+                "- 3–5 short paragraphs. Show relevant achievements with metrics.\n"
+                "- Close with a short, confident sign-off using the name from the contact block.\n"
+                "- No placeholders like 'Your Name'.\n"
+            )
+            raw = _call_openai(
+                "You are an expert cover letter writer. Create a tailored, one-page cover letter with a professional tone. "
+                "Avoid placeholders. If a CONTACT BLOCK is given, place it at top. "
+                "Never invent employers, dates, or credentials. If unsure, keep it high level and omit specifics.",
+                u_prompt,
+            )
+            cover_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
+            cover_text = _dedupe_contact_block(contact_block, cover_text)
+            cover_text = squeeze_blank_lines(cover_text)
+
+        return {
+            "ok": True,
+            "doc_type": target,
+            "resume_text": resume_text,
+            "cover_text": cover_text,
+            "model_used": ("openai" if USE_AI else "local-fallback"),
+            "timestamp": _dt.datetime.utcnow().isoformat() + "Z",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Help you debug 500s quickly
+        raise HTTPException(status_code=500, detail=f"Generator error: {e!s}")
+
+# =========================
+#        SAVE ROUTE
+# =========================
+@router.post("/resume-cover/save")
+def save_resume_cover(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),   # PROTECTED
+):
+    """
+    Save resume and/or cover into the Resume table (same store for both),
+    labeled via `source` so 'My Resumes' can show both.
+    """
+    doc_type = str(payload.get("doc_type", "resume")).lower()
+
+    resume_id: Optional[int] = None
+    cover_id: Optional[int] = None
+
+    # Save resume row
+    if doc_type in ("resume", "both"):
+        resume_title = (payload.get("resume_title") or "").strip()
+        resume_text = (payload.get("resume_text") or "").strip()
+        if not resume_title or not resume_text:
+            raise HTTPException(status_code=422, detail="Missing resume_title or resume_text")
+        r = Resume(
+            title=resume_title,
+            content=resume_text,
+            source="resume",
+            user_id=user.id,
         )
-        raw = _call_openai(RESUME_SYSTEM, u_prompt)
-        resume_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
-        resume_text = _dedupe_contact_block(contact_block, resume_text)
+        db.add(r); db.commit(); db.refresh(r)
+        resume_id = r.id
 
-    if target in ("cover", "both"):
-        u_prompt = COVER_USER_TMPL.format(
-            CONTACT_BLOCK=contact_block,
-            TODAY=today_str,
-            role_or_target=role,
-            company=company or "(not specified)",
-            guidance=guidance or "(none)"
+    # Save cover row
+    if doc_type in ("cover", "both"):
+        cover_title = (payload.get("cover_title") or "").strip()
+        cover_text = (payload.get("cover_text") or "").strip()
+        if not cover_title or not cover_text:
+            raise HTTPException(status_code=422, detail="Missing cover_title or cover_text")
+        c = Resume(
+            title=cover_title,
+            content=cover_text,
+            source="cover",
+            user_id=user.id,
         )
-        raw = _call_openai(COVER_SYSTEM, u_prompt)
-        cover_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
-        cover_text = _dedupe_contact_block(contact_block, cover_text)
+        db.add(c); db.commit(); db.refresh(c)
+        cover_id = c.id
 
-    if resume_text:
-        resume_text = squeeze_blank_lines(resume_text)
-        # Footer only for resumes (cover stays clean)
-        resume_text = f"{resume_text}\n\n_Last updated: { _dt.date.today().strftime('%B %d, %Y') }_"
-
-    if cover_text:
-        cover_text = squeeze_blank_lines(cover_text)
-        # No footer for cover letters
-
-    return GenerateResponse(
-        ok=True,
-        doc_type=target,
-        resume_text=resume_text,
-        cover_text=cover_text,
-        model_used=model_used,
-        timestamp=_dt.datetime.utcnow().isoformat() + "Z",
-    )
+    return {"ok": True, "resume_id": resume_id, "cover_id": cover_id}

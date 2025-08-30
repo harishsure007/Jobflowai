@@ -11,13 +11,13 @@ from fastapi.routing import APIRoute
 # -----------------------------
 # Load environment (.env files)
 # -----------------------------
-# Try backend/.env first, then project root .env
 env_loaded = load_dotenv(dotenv_path=Path("backend/.env"))
 if not env_loaded:
     load_dotenv(dotenv_path=Path(".env"))
 
 ENV = os.getenv("ENV", "dev").lower()
 AUTO_MIGRATE = os.getenv("AUTO_MIGRATE", "false").strip().lower() == "true"
+USE_AUTH_MIDDLEWARE = os.getenv("USE_AUTH_MIDDLEWARE", "false").strip().lower() == "true"
 
 # -----------
 # Logging
@@ -58,9 +58,9 @@ from backend.routes.jobs_debug import router as jobs_debug_router  # noqa: E402
 # CORS
 # -----------
 DEFAULT_ORIGINS = [
-    "http://localhost:5173", "http://127.0.0.1:5173",   # Vite dev/preview
+    "http://localhost:5173", "http://127.0.0.1:5173",
     "http://localhost:4173", "http://127.0.0.1:4173",
-    "http://localhost:3000", "http://127.0.0.1:3000",   # CRA
+    "http://localhost:3000", "http://127.0.0.1:3000",
     "http://localhost:3001", "http://127.0.0.1:3001",
 ]
 try:
@@ -87,32 +87,33 @@ app.add_middleware(
 )
 
 # ------------------------------------------------
-# JWT Auth middleware (MUST be before routes)
+# JWT Auth middleware (toggleable for debugging)
 # ------------------------------------------------
-# Ensure this class exists in backend/middleware/auth_middleware.py
-# and that it sets request.state.user when Authorization is valid.
-try:
-    from backend.middleware.auth_middleware import AuthMiddleware
-    app.add_middleware(
-        AuthMiddleware,
-        excluded_paths={
-            "/", "/health",
-            "/api/v1/auth/login", "/api/v1/auth/signup",
-            "/api/v1/auth/refresh", "/api/v1/auth/reset", "/api/v1/auth/otp",
-            # Add public endpoints here if you have any (optional):
-            # "/api/v1/jobs",
-            # "/api/v1/_debug/*",
-        },
-    )
-except Exception as e:
-    logging.warning("AuthMiddleware not mounted: %s", e)
+if USE_AUTH_MIDDLEWARE:
+    try:
+        from backend.middleware.auth_middleware import AuthMiddleware
+        app.add_middleware(
+            AuthMiddleware,
+            excluded_paths={
+                "/", "/health",
+                "/openapi.json", "/docs", "/redoc", "/favicon.ico",
+                "/api/v1/auth/login", "/api/v1/auth/signup",
+                "/api/v1/auth/refresh", "/api/v1/auth/reset", "/api/v1/auth/otp",
+                "/api/v1/resume-cover",           # PUBLIC generator
+                # (keep /api/v1/resume-cover/save protected)
+            },
+        )
+        logging.info("AuthMiddleware mounted (USE_AUTH_MIDDLEWARE=true)")
+    except Exception as e:
+        logging.warning("AuthMiddleware not mounted: %s", e)
+else:
+    logging.info("AuthMiddleware disabled (USE_AUTH_MIDDLEWARE=false)")
 
 # ------------------------------------------------
-# OPTIONAL: simple middleware to log auth presence
+# OPTIONAL: log auth header presence
 # ------------------------------------------------
 @app.middleware("http")
 async def log_auth_header(request, call_next):
-    # Shows whether Authorization header is present per request
     auth_present = bool(request.headers.get("authorization"))
     logging.info("REQ %s %s  Auth? %s", request.method, request.url.path, auth_present)
     response = await call_next(request)
@@ -121,7 +122,6 @@ async def log_auth_header(request, call_next):
 # ------------------------------------------------
 # Mount routers (avoid double /api/v1 prefixes)
 # ------------------------------------------------
-# Feature routers under a single /api/v1, assuming each APIRouter uses short prefixes ("/resume", "/generate", ...)
 app.include_router(resume_routes.router, prefix="/api/v1")
 app.include_router(generate.router,      prefix="/api/v1")
 app.include_router(enhance.router,       prefix="/api/v1")
@@ -133,17 +133,14 @@ app.include_router(parse.router,         prefix="/api/v1")
 app.include_router(auth_reset.router,    prefix="/api/v1", tags=["Auth (Reset)"])
 app.include_router(auth_routes.router,   prefix="/api/v1", tags=["Auth (JWT)"])
 
-# Resume/Cover generator — exposes "/resume-cover" and "/resume-cover/save"
+# Resume/Cover generator — "/resume-cover" (PUBLIC) and "/resume-cover/save" (PROTECTED)
 app.include_router(resume_cover_router,  prefix="/api/v1")
 
 # Jobs + profile + debug
 app.include_router(jobs.router,          prefix="/api/v1")
-
-# If profile_router already includes "/profile" internally, this is correct.
-# If it already includes "/api/v1/profile" internally, remove the prefix here.
 app.include_router(profile_router,       prefix="/api/v1")
 
-# jobs_debug_router usually carries its own explicit prefix (e.g., "/api/v1/_debug")
+# jobs_debug_router usually has its own explicit prefix (e.g., "/api/v1/_debug")
 app.include_router(jobs_debug_router)
 
 # -----------

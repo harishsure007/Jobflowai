@@ -8,6 +8,9 @@ from typing import Any, Dict, Optional
 import jwt  # PyJWT
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # === ENV CONFIG ===
 JWT_SECRET: str = os.getenv("JWT_SECRET", "dev_insecure_change_me")
@@ -22,15 +25,19 @@ JWT_LEEWAY_SEC: int = int(os.getenv("JWT_LEEWAY_SEC", "30"))
 # NOTE: auto_error=False so we can consistently return 401 on problems
 security = HTTPBearer(auto_error=False)
 
+# ---------- PUBLIC ALLOW-LIST (no auth required) ----------
+PUBLIC_PATHS = {
+    "/", "/openapi.json", "/docs", "/redoc",
+    "/api/v1/health",
+    "/api/v1/resume-cover",   # <-- generator should be PUBLIC
+}
 
 # ---------- Token creation ----------
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-
 def _encode(payload: Dict[str, Any]) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
-
 
 def create_access_token(sub: str, extra: Optional[Dict[str, Any]] = None, minutes: Optional[int] = None) -> str:
     """
@@ -52,7 +59,6 @@ def create_access_token(sub: str, extra: Optional[Dict[str, Any]] = None, minute
         payload.update(extra)
     return _encode(payload)
 
-
 def create_refresh_token(sub: str, extra: Optional[Dict[str, Any]] = None, minutes: Optional[int] = None) -> str:
     """
     OPTIONAL helper if you later add a refresh flow.
@@ -72,7 +78,6 @@ def create_refresh_token(sub: str, extra: Optional[Dict[str, Any]] = None, minut
         payload.update(extra)
     return _encode(payload)
 
-
 # ---------- Token decoding / validation ----------
 def decode_token(token: str) -> Dict[str, Any]:
     """
@@ -88,8 +93,7 @@ def decode_token(token: str) -> Dict[str, Any]:
         # Catch-all for other PyJWT exceptions
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
-# ---------- Dependencies ----------
+# ---------- FastAPI dependencies (unchanged external API) ----------
 def require_claims(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
     """
     Strict auth dependency. Returns the validated claims dict.
@@ -104,7 +108,6 @@ def require_claims(credentials: Optional[HTTPAuthorizationCredentials] = Depends
 
     return decode_token(token)
 
-
 def require_user_id(claims: Dict[str, Any] = Depends(require_claims)) -> str:
     """
     Returns the authenticated user's id (the `sub` claim) as a string.
@@ -113,7 +116,6 @@ def require_user_id(claims: Dict[str, Any] = Depends(require_claims)) -> str:
     if not isinstance(sub, str) or not sub.strip():
         raise HTTPException(status_code=401, detail="Invalid token subject")
     return sub
-
 
 def optional_claims(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[Dict[str, Any]]:
     """
@@ -135,7 +137,6 @@ def optional_claims(credentials: Optional[HTTPAuthorizationCredentials] = Depend
         # Treat invalid/missing as anonymous for optional paths
         return None
 
-
 def optional_user_id(claims: Optional[Dict[str, Any]] = Depends(optional_claims)) -> Optional[str]:
     """
     Returns user id (sub) if present/valid, else None.
@@ -144,3 +145,46 @@ def optional_user_id(claims: Optional[Dict[str, Any]] = Depends(optional_claims)
         return None
     sub = claims.get("sub")
     return str(sub) if isinstance(sub, (str, int)) and str(sub).strip() else None
+
+# ---------- Starlette middleware (allow-list + bearer enforcement) ----------
+class AuthMiddleware(BaseHTTPMiddleware):
+    """
+    Request-level guard: lets PUBLIC_PATHS through; enforces Bearer on others.
+    Also exposes decoded claims via request.state.claims and request.state.user_id.
+    """
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        method = request.method.upper()
+
+        # Always allow CORS preflights
+        if method == "OPTIONS":
+            return await call_next(request)
+
+        # Allow exact public paths and their trailing-slash variants
+        if path in PUBLIC_PATHS or (path.endswith("/") and path[:-1] in PUBLIC_PATHS):
+            return await call_next(request)
+
+        # For everything else, require Authorization: Bearer <token>
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+
+        token = auth.split(" ", 1)[1].strip()
+        try:
+            claims = decode_token(token)
+        except HTTPException as e:
+            return JSONResponse({"detail": e.detail}, status_code=e.status_code)
+
+        # Stash for handlers that want to read from request.state
+        request.state.claims = claims
+        sub = claims.get("sub")
+        request.state.user_id = str(sub) if isinstance(sub, (str, int)) else None
+
+        return await call_next(request)
+
+__all__ = [
+    "JWT_SECRET", "JWT_ALGO", "JWT_EXPIRES_MIN", "JWT_REFRESH_EXPIRES_MIN", "JWT_LEEWAY_SEC",
+    "create_access_token", "create_refresh_token", "decode_token",
+    "require_claims", "require_user_id", "optional_claims", "optional_user_id",
+    "PUBLIC_PATHS", "AuthMiddleware",
+]
