@@ -1,9 +1,9 @@
 # backend/migrations/env.py
 from __future__ import annotations
 
-from logging.config import fileConfig
 import os
 import sys
+from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -37,36 +37,44 @@ import backend.models  # noqa: F401
 # Alembic Config object, provides access to values in alembic.ini
 config = context.config
 
-# Allow overriding sqlalchemy.url via env var to avoid hardcoding secrets:
-#  - ALEMBIC_DATABASE_URL (preferred)
-#  - DATABASE_URL_SYNC (fallback)
-env_url = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL_SYNC")
-if env_url:
-    config.set_main_option("sqlalchemy.url", env_url)
+# Prefer env vars; fall back to alembic.ini if set there
+env_url = (
+    os.getenv("ALEMBIC_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+    or os.getenv("DATABASE_URL_SYNC")
+    or config.get_main_option("sqlalchemy.url")
+)
+if not env_url:
+    raise RuntimeError(
+        "No database URL found. Set ALEMBIC_DATABASE_URL or DATABASE_URL (or put sqlalchemy.url in alembic.ini)."
+    )
+config.set_main_option("sqlalchemy.url", env_url)
 
-# Interpret the config file for Python logging.
+# Logging configuration
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Metadata for ‘--autogenerate’
 target_metadata = Base.metadata
 
-# Optional: set these via env if you ever use non-default schemas
+# Optional: custom version table/schema via env
 VERSION_TABLE = os.getenv("ALEMBIC_VERSION_TABLE", "alembic_version")
-VERSION_TABLE_SCHEMA = os.getenv("ALEMBIC_VERSION_SCHEMA")  # e.g. "public" or another schema name
+VERSION_TABLE_SCHEMA = os.getenv("ALEMBIC_VERSION_SCHEMA")  # e.g. "public"
 
+# Enable batch mode automatically for SQLite (schema changes)
+is_sqlite = env_url.startswith("sqlite")
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (no DB connection)."""
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=env_url,
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
         compare_server_default=True,
         version_table=VERSION_TABLE,
         version_table_schema=VERSION_TABLE_SCHEMA,
+        render_as_batch=is_sqlite,  # helpful for SQLite ddl changes
         # include_schemas=True,  # enable if you manage multiple schemas
     )
     with context.begin_transaction():
@@ -75,7 +83,6 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode (with DB connection)."""
-    # Some Alembic installs can return None here; guard for that.
     section = config.get_section(config.config_ini_section) or {}
     connectable = engine_from_config(
         section,
@@ -91,6 +98,7 @@ def run_migrations_online() -> None:
             compare_server_default=True,
             version_table=VERSION_TABLE,
             version_table_schema=VERSION_TABLE_SCHEMA,
+            render_as_batch=is_sqlite,  # helpful for SQLite ddl changes
             # include_schemas=True,  # enable if you manage multiple schemas
         )
         with context.begin_transaction():

@@ -1,45 +1,48 @@
+// src/DashboardPages/FeedbackPage.js
 import React, { useEffect, useState } from "react";
 import {
   createFeedback,
   getAllFeedback,
   updateFeedback,
   deleteFeedback,
-} from "./feedback";
+} from "../api/feedback"; // ⬅️ adjust path if needed
 
 export default function FeedbackPage() {
   const [feedbacks, setFeedbacks] = useState([]);
   const [form, setForm] = useState({ question: "", answer: "", feedback: "" });
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     loadFeedback();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadFeedback = async () => {
+  async function loadFeedback() {
     setLoading(true);
-    setError(null);
+    setError("");
     try {
-      const res = await getAllFeedback();
-      setFeedbacks(res.data);
+      const data = await getAllFeedback(); // ⬅️ returns array directly
+      setFeedbacks(Array.isArray(data) ? data : []);
     } catch (err) {
       setError("Failed to load feedback. Please try again.");
-    }
-    setLoading(false);
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    if (!form.question || !form.answer || !form.feedback) {
-      setError("All fields are required.");
+    } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+
+    if (!form.question.trim() || !form.answer.trim() || !form.feedback.trim()) {
+      setError("All fields are required.");
       return;
     }
 
+    setSubmitting(true);
     try {
       if (editingId) {
         await updateFeedback(editingId, form);
@@ -51,44 +54,44 @@ export default function FeedbackPage() {
       await loadFeedback();
     } catch (err) {
       setError("Failed to submit feedback. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-    setLoading(false);
-  };
+  }
 
-  const handleEdit = (fb) => {
+  function handleEdit(fb) {
     setForm({
-      question: fb.question,
-      answer: fb.answer,
-      feedback: fb.feedback,
+      question: fb.question || "",
+      answer: fb.answer || "",
+      feedback: fb.feedback || "",
     });
     setEditingId(fb.id);
-    setError(null);
-  };
+    setError("");
+  }
 
-  const handleDelete = async (id) => {
+  async function handleDelete(id) {
     if (!window.confirm("Are you sure you want to delete this feedback?")) return;
-    setLoading(true);
-    setError(null);
+    setError("");
     try {
       await deleteFeedback(id);
       await loadFeedback();
     } catch (err) {
       setError("Failed to delete feedback. Please try again.");
     }
-    setLoading(false);
-  };
+  }
 
   return (
-    <div style={{ padding: 20, maxWidth: 600, margin: "auto", fontFamily: "Arial, sans-serif" }}>
-      <h2>Feedback Manager</h2>
+    <div style={{ padding: 20, maxWidth: 900, margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
+      <h2 style={{ marginTop: 0 }}>Feedback Manager</h2>
 
       {error && (
-        <div style={{ color: "red", marginBottom: 10 }}>
+        <div style={{ color: "#b91c1c", background: "#fee2e2", padding: 10, borderRadius: 6, marginBottom: 12 }}>
           ⚠️ {error}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ marginBottom: 20 }}>
+      {/* Form */}
+      <form onSubmit={handleSubmit} style={{ marginBottom: 24, border: "1px solid #e5e7eb", padding: 16, borderRadius: 8, background: "#fff" }}>
         <label>
           Question:
           <input
@@ -96,7 +99,7 @@ export default function FeedbackPage() {
             placeholder="Question"
             value={form.question}
             onChange={(e) => setForm({ ...form, question: e.target.value })}
-            disabled={loading}
+            disabled={submitting}
           />
         </label>
 
@@ -107,7 +110,7 @@ export default function FeedbackPage() {
             placeholder="Answer"
             value={form.answer}
             onChange={(e) => setForm({ ...form, answer: e.target.value })}
-            disabled={loading}
+            disabled={submitting}
           />
         </label>
 
@@ -118,41 +121,75 @@ export default function FeedbackPage() {
             placeholder="Feedback"
             value={form.feedback}
             onChange={(e) => setForm({ ...form, feedback: e.target.value })}
-            disabled={loading}
+            disabled={submitting}
           />
         </label>
 
-        <button type="submit" disabled={loading} style={buttonStyle}>
-          {loading ? "Please wait..." : editingId ? "Update" : "Submit"}
+        <button type="submit" disabled={submitting} style={buttonStyle}>
+          {submitting ? "Please wait..." : editingId ? "Update" : "Submit"}
         </button>
+        {editingId && (
+          <button
+            type="button"
+            onClick={() => {
+              setEditingId(null);
+              setForm({ question: "", answer: "", feedback: "" });
+            }}
+            style={{ ...buttonStyle, marginLeft: 8, backgroundColor: "#6b7280" }}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+        )}
       </form>
 
       <h3>All Feedback</h3>
 
-      {loading && <p>Loading feedback...</p>}
-
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {feedbacks.map((fb) => (
-          <li key={fb.id} style={listItemStyle}>
-            <div><b>Q:</b> {fb.question}</div>
-            <div><b>A:</b> {fb.answer}</div>
-            <div><b>Feedback:</b> {fb.feedback}</div>
-            <div style={{ marginTop: 5 }}>
-              <button onClick={() => handleEdit(fb)} disabled={loading} style={smallButtonStyle}>
-                Edit
-              </button>
-              <button onClick={() => handleDelete(fb.id)} disabled={loading} style={{ ...smallButtonStyle, marginLeft: 10, backgroundColor: "#e74c3c" }}>
-                Delete
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {loading ? (
+        <p>Loading feedback...</p>
+      ) : feedbacks.length === 0 ? (
+        <p style={{ color: "#6b7280" }}>No feedback found.</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {feedbacks.map((fb) => (
+            <li key={fb.id} style={listItemStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div><b>ID:</b> {fb.id}</div>
+                {fb.created_at && <div style={{ color: "#6b7280" }}><b>Created:</b> {formatDate(fb.created_at)}</div>}
+              </div>
+              <div style={{ marginTop: 8 }}><b>Q:</b> {fb.question}</div>
+              <div style={{ marginTop: 8 }}><b>A:</b> <pre style={preStyle}>{fb.answer}</pre></div>
+              <div style={{ marginTop: 8 }}><b>Feedback:</b> <pre style={preStyle}>{fb.feedback}</pre></div>
+              <div style={{ marginTop: 10 }}>
+                <button onClick={() => handleEdit(fb)} disabled={submitting} style={smallButtonStyle}>
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(fb.id)}
+                  disabled={submitting}
+                  style={{ ...smallButtonStyle, marginLeft: 10, backgroundColor: "#e74c3c" }}
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-// Styles
+/* ========== helpers & styles ========== */
+function formatDate(d) {
+  try {
+    const dt = new Date(d);
+    return dt.toLocaleString();
+  } catch {
+    return d;
+  }
+}
+
 const inputStyle = {
   display: "block",
   width: "100%",
@@ -165,14 +202,14 @@ const inputStyle = {
 
 const textareaStyle = {
   ...inputStyle,
-  height: 80,
+  height: 100,
   resize: "vertical",
 };
 
 const buttonStyle = {
-  padding: "10px 20px",
-  fontSize: 16,
-  borderRadius: 4,
+  padding: "10px 16px",
+  fontSize: 15,
+  borderRadius: 6,
   border: "none",
   backgroundColor: "#007bff",
   color: "white",
@@ -180,9 +217,9 @@ const buttonStyle = {
 };
 
 const smallButtonStyle = {
-  padding: "5px 12px",
+  padding: "6px 12px",
   fontSize: 14,
-  borderRadius: 4,
+  borderRadius: 6,
   border: "none",
   backgroundColor: "#3498db",
   color: "white",
@@ -192,7 +229,16 @@ const smallButtonStyle = {
 const listItemStyle = {
   padding: "12px",
   marginBottom: "12px",
-  border: "1px solid #ccc",
-  borderRadius: "6px",
-  backgroundColor: "#f9f9f9",
+  border: "1px solid #e5e7eb",
+  borderRadius: "8px",
+  backgroundColor: "#fff",
+};
+
+const preStyle = {
+  whiteSpace: "pre-wrap",
+  margin: 0,
+  background: "#f9fafb",
+  border: "1px solid #e5e7eb",
+  borderRadius: 6,
+  padding: 8,
 };

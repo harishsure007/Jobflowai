@@ -6,27 +6,22 @@ const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "http://localhost:800
 const SEARCH_URL = `${API_BASE_URL}/api/v1/jobs/search`;
 
 export default function JobPostingsPage() {
-  // server-side query controls
   const [q, setQ] = useState("data analyst");
   const [location, setLocation] = useState("remote");
   const [remote, setRemote] = useState(true);
   const [page, setPage] = useState(1);
 
-  // data + loading
   const [jobs, setJobs] = useState([]);
-  const [total, setTotal] = useState(null); // if backend returns total
+  const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-
-  
-  // filters (wired to backend)
-  const [employmentType, setEmploymentType] = useState("any"); // any | full-time | part-time | contract | internship | temporary
-  const [minSalary, setMinSalary] = useState("");
-  const [postedWithin, setPostedWithin] = useState("any"); // any | 1 | 7 | 30  (days UI) -> 24h|7d|30d (API)
+  // filters
+  const [employmentType, setEmploymentType] = useState("any");
+  const [postedWithin, setPostedWithin] = useState("any");
   const [sourceFilter, setSourceFilter] = useState("any");
+  const [expLevel, setExpLevel] = useState("any");
 
-  // build dynamic source options from current results (for the dropdown)
   const sourceOptions = useMemo(() => {
     const uniq = new Set();
     jobs.forEach((j) => j?.source && uniq.add(j.source));
@@ -37,7 +32,7 @@ export default function JobPostingsPage() {
     if (v === "1") return "24h";
     if (v === "7") return "7d";
     if (v === "30") return "30d";
-    return undefined; // "any"
+    return undefined;
   };
 
   const fetchJobs = async (nextPage = page) => {
@@ -52,7 +47,6 @@ export default function JobPostingsPage() {
           page: nextPage,
           per_page: 20,
           employment_type: employmentType === "any" ? undefined : employmentType,
-          min_salary: minSalary || undefined,
           posted_within: toApiPostedWithin(postedWithin),
           source: sourceFilter === "any" ? undefined : sourceFilter,
           sort_by: "posted_at",
@@ -60,7 +54,6 @@ export default function JobPostingsPage() {
         },
       });
 
-      // Support both shapes: array OR { page, per_page, total, items }
       const data = res.data;
       if (Array.isArray(data)) {
         setJobs(data);
@@ -104,6 +97,19 @@ export default function JobPostingsPage() {
     fetchJobs(p);
   };
 
+  const filteredJobs = useMemo(() => {
+    const wantExp = (v) => {
+      if (expLevel === "any") return true;
+      const hay = [v?.title, v?.description].filter(Boolean).join(" ").toLowerCase();
+      if (expLevel === "junior") return /\b(junior|entry|new grad|0-2\s*years)\b/.test(hay);
+      if (expLevel === "mid") return /\b(mid|intermediate|3-5\s*years)\b/.test(hay);
+      if (expLevel === "senior") return /\b(senior|sr\.?|6\+?\s*years|principal)\b/.test(hay);
+      if (expLevel === "lead") return /\b(lead|staff|principal|manager)\b/.test(hay);
+      return true;
+    };
+    return jobs.filter((j) => wantExp(j));
+  }, [jobs, expLevel]);
+
   return (
     <div className="jobs-wrap">
       <style>{css}</style>
@@ -113,7 +119,7 @@ export default function JobPostingsPage() {
           📌 Job Postings <span className="muted">(Aggregated)</span>
         </h2>
 
-        {/* Top (server-side) search bar */}
+        {/* Top search */}
         <div className="filters top">
           <input
             className="input"
@@ -140,7 +146,7 @@ export default function JobPostingsPage() {
           </button>
         </div>
 
-        {/* Filters row (also sent to backend) */}
+        {/* Filters row */}
         <div className="filters bottom">
           <select
             className="select"
@@ -148,24 +154,12 @@ export default function JobPostingsPage() {
             onChange={(e) => setEmploymentType(e.target.value)}
           >
             <option value="any">Employment type — Any</option>
-            <option value="full-time">Full‑time</option>
-            <option value="part-time">Part‑time</option>
+            <option value="full-time">Full-time</option>
+            <option value="part-time">Part-time</option>
             <option value="contract">Contract</option>
             <option value="internship">Internship</option>
             <option value="temporary">Temporary</option>
           </select>
-
-          <div className="field">
-            <label className="label">Min salary</label>
-            <input
-              className="input"
-              type="number"
-              min="0"
-              placeholder="e.g., 80000"
-              value={minSalary}
-              onChange={(e) => setMinSalary(e.target.value)}
-            />
-          </div>
 
           <select
             className="select"
@@ -190,23 +184,41 @@ export default function JobPostingsPage() {
             ))}
           </select>
 
+          <select
+            className="select"
+            value={expLevel}
+            onChange={(e) => setExpLevel(e.target.value)}
+          >
+            <option value="any">Experience — Any</option>
+            <option value="junior">Junior / Entry</option>
+            <option value="mid">Mid</option>
+            <option value="senior">Senior</option>
+            <option value="lead">Lead / Staff</option>
+          </select>
+
           <button
             className="btn"
             onClick={() => {
               setEmploymentType("any");
-              setMinSalary("");
               setPostedWithin("any");
               setSourceFilter("any");
+              setExpLevel("any");
             }}
           >
             Reset filters
           </button>
         </div>
+
+        {!loading && (
+          <div className="subtle">
+            Showing {filteredJobs.length} result{filteredJobs.length === 1 ? "" : "s"}
+            {typeof total === "number" ? ` (server total: ${total})` : ""}
+          </div>
+        )}
       </header>
 
       {err && <div className="alert">{err}</div>}
 
-      {/* Loading skeletons */}
       {loading && (
         <div className="list">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -221,11 +233,10 @@ export default function JobPostingsPage() {
         </div>
       )}
 
-      {/* Results */}
-      {!loading && jobs.length > 0 && (
+      {!loading && filteredJobs.length > 0 && (
         <>
           <div className="list">
-            {jobs.map((job, idx) => (
+            {filteredJobs.map((job, idx) => (
               <JobCard job={job} key={idx} />
             ))}
           </div>
@@ -236,7 +247,9 @@ export default function JobPostingsPage() {
             </button>
             <span className="page-ind">
               Page {page}
-              {typeof total === "number" ? ` • Showing ${jobs.length} of ${total}` : ""}
+              {typeof total === "number"
+                ? ` • Showing ${filteredJobs.length} of ${total}`
+                : ""}
             </span>
             <button className="btn" onClick={handleNext} disabled={loading}>
               Next ▶
@@ -245,8 +258,7 @@ export default function JobPostingsPage() {
         </>
       )}
 
-      {/* Empty state */}
-      {!loading && jobs.length === 0 && !err && (
+      {!loading && filteredJobs.length === 0 && !err && (
         <div className="empty">
           <div className="empty-emoji">🔎</div>
           <h3>No jobs match these filters</h3>
@@ -315,14 +327,13 @@ function JobCard({ job }) {
   );
 }
 
-// Robust date parsing: ISO, seconds, milliseconds
 function formatDate(v) {
   try {
     if (v === null || v === undefined || v === "") return "";
     const num = Number(v);
     if (Number.isFinite(num)) {
-      if (num >= 1e12) return new Date(num).toLocaleDateString(); // ms
-      if (num >= 1e9) return new Date(num * 1000).toLocaleDateString(); // sec
+      if (num >= 1e12) return new Date(num).toLocaleDateString();
+      if (num >= 1e9) return new Date(num * 1000).toLocaleDateString();
     }
     const d = new Date(v);
     if (!isNaN(d)) return d.toLocaleDateString();
@@ -342,27 +353,51 @@ const css = `
 /* rows */
 .filters { display: grid; gap: 10px; align-items: center; }
 .filters.top { grid-template-columns: 1.5fr 1.2fr auto auto; }
-.filters.bottom { grid-template-columns: 1.2fr 1fr 1fr 1fr auto; margin-top: 10px; }
+.filters.bottom { grid-template-columns: 1fr 1fr 1fr 1fr auto; margin-top: 10px; }
 
-.field { display: grid; gap: 6px; }
-.label { font-size: 12px; color: #6b7280; margin-left: 2px; }
-
+/* Inputs/Selects with background color like source chips */
 .input, .select {
-  width: 100%; padding: 10px 12px; border: 1px solid #dfe3e6; border-radius: 10px;
-  background: #fff; outline: none; transition: box-shadow .2s, border-color .2s;
+  width: 100%;
+  height: 42px;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 20px;
+  border: 1px solid #dfe3e6;
+  border-radius: 10px;
+  background: #eef2ff;   /* 👈 light chip-style background */
+  outline: none;
 }
-.input:focus, .select:focus { border-color: #8aa8ff; box-shadow: 0 0 0 4px rgba(138,168,255,.15); }
+.input::placeholder { color: #6b7280; }
+.select { appearance: none; }
 
-.checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: #374151; }
-
+/* === BUTTONS (Sky Blue palette, old outline style) === */
+/* === BUTTONS (Blue-400 / Blue-500) === */
 .btn {
-  padding: 10px 14px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; cursor: pointer;
-  font-weight: 600; transition: background .2s, transform .02s, border-color .2s;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #60a5fa;   /* Blue-400 */
+  background: #2563eb;         /* default */
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background .2s, transform .02s, border-color .2s;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.btn:hover { background: #f8fafc; }
+.btn:hover { background: #3b82f6; border-color: #3b82f6; } /* Blue-500 */
 .btn:active { transform: translateY(1px); }
-.btn.primary { background: #111827; color: #fff; border-color: #111827; }
-.btn.primary:hover { background: #0b1220; }
+
+.btn.primary {
+  background: #2563eb;   /* Blue-500 for primary */
+  border-color: #3b82f6;
+  color: #fff;
+}
+.btn.primary:hover { background: #2563eb; border-color: #2563eb; } /* Blue-600 on hover */
+
+
+.subtle { margin-top: 8px; color: #6b7280; font-size: 13px; }
 
 .alert { margin-top: 14px; padding: 10px 12px; background: #fff4f4; border: 1px solid #ffd9d9; color: #b42318; border-radius: 10px; }
 
@@ -402,9 +437,13 @@ const css = `
 .skeleton .w80 { width: 80%; } .skeleton .w90 { width: 90%; }
 @keyframes shimmer { 0% { background-position: 0% 0; } 100% { background-position: -200% 0; } }
 
+/* Responsive */
+@media (max-width: 1100px) {
+  .filters.bottom { grid-template-columns: 1fr 1fr 1fr auto; }
+}
 @media (max-width: 900px) {
   .filters.top { grid-template-columns: 1fr; }
-  .filters.bottom { grid-template-columns: 1fr 1fr 1fr; }
+  .filters.bottom { grid-template-columns: 1fr 1fr; }
   .card-head { flex-direction: column; align-items: flex-start; }
   .card-foot { flex-direction: column; align-items: flex-start; gap: 12px; }
 }

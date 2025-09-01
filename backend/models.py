@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Index, func
+    Column, Integer, String, Text, DateTime, ForeignKey, Index
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func as sa_func
@@ -52,7 +52,7 @@ class User(Base):
 
     # Case-insensitive unique email (works natively on Postgres; acceptable on SQLite ≥ 3.9)
     __table_args__ = (
-        Index("uq_users_email_lower", func.lower(email), unique=True),
+        Index("uq_users_email_lower", sa_func.lower(email), unique=True),
     )
 
     def __repr__(self) -> str:
@@ -66,7 +66,8 @@ class Feedback(Base):
     __tablename__ = "feedbacks"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    question = Column(String(500), nullable=False)
+    # Changed from String(500) -> Text to avoid overflow on long questions
+    question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     feedback = Column(Text, nullable=False)
 
@@ -133,7 +134,7 @@ class Profile(Base):
     education      = Column(MutableList.as_mutable(JSONType), nullable=False, default=list)
     certifications = Column(MutableList.as_mutable(JSONType), nullable=False, default=list)
 
-    # ✅ Fix: extras should be a dict, not a list
+    # dict for extra fields
     extras         = Column(MutableDict.as_mutable(JSONType), nullable=True, default=dict)
 
     created_at = Column(DateTime, nullable=False, server_default=sa_func.now())

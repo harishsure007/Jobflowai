@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { saveAs } from "file-saver";
 import { Document, Packer, Paragraph } from "docx";
 import { jsPDF } from "jspdf";
+
 /* -------------------- API base (CRA or Vite) -------------------- */
 const RAW_API =
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE) ||
@@ -97,7 +98,6 @@ export default function ResumeCoverGenerator() {
   const [coverText, setCoverText] = useState("");
 
   /* -------------------- Network helpers -------------------- */
-  // 🔧 Fix: read both "access_token" (new) and "token" (legacy)
   const getToken = () => {
     const t1 = (localStorage.getItem("access_token") || "").trim();
     const t2 = (localStorage.getItem("token") || "").trim();
@@ -185,8 +185,6 @@ export default function ResumeCoverGenerator() {
 
       const data = await postJSONMaybeAuth(`${API_BASE}/api/v1/resume-cover`, payload);
 
-      console.log("[resume-cover] response:", data);
-
       const resume =
         data?.resume ??
         data?.resume_text ??
@@ -255,7 +253,6 @@ export default function ResumeCoverGenerator() {
         }${res.cover_id ? ` | Cover ID: ${res.cover_id}` : ""}`.trim()
       );
     } catch (e) {
-      // clearer message on auth problems / server errors
       alert(`❌ Save failed: ${normalizeError(e)}`);
     }
   };
@@ -274,24 +271,19 @@ export default function ResumeCoverGenerator() {
     saveAs(blob, `${name}.docx`);
   };
 
-
   const downloadPDF = (name, text) => {
     if (!text) return;
-  
-    // A4, points. Change to { unit: "mm", format: "a4" } if you prefer mm.
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-  
     const margin = 40;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const maxWidth = pageWidth - margin * 2;
     const lineHeight = 16;
-  
-    // Wrap long lines to fit page width
+
     const wrapped = doc.splitTextToSize(String(text), maxWidth);
-  
+
     let y = margin;
-    wrapped.forEach(line => {
+    wrapped.forEach((line) => {
       if (y > pageHeight - margin) {
         doc.addPage();
         y = margin;
@@ -299,180 +291,181 @@ export default function ResumeCoverGenerator() {
       doc.text(line, margin, y);
       y += lineHeight;
     });
-  
+
     doc.save(`${name || "document"}.pdf`);
   };
-  
 
   /* -------------------- UI -------------------- */
   return (
     <div style={styles.page}>
+      <style>{`
+        @media (max-width: 960px) {
+          .two-col { grid-template-columns: 1fr !important; }
+          .sticky-col { position: static !important; top: auto !important; }
+        }
+      `}</style>
+
       <div style={styles.container}>
         <h2 style={styles.title}>✍️ Resume & Cover Generator</h2>
 
-        <div style={styles.card}>
-          <div style={styles.row}>
-            <label style={styles.label}>Your Command</label>
-            <input
-              type="text"
-              placeholder={`e.g., "Generate a resume for mid-level Data Analyst"`}
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              style={styles.input}
-            />
-          </div>
-
-          <div style={styles.row}>
-            <label style={styles.label}>Type</label>
-            <select
-              value={docType}
-              onChange={(e) => setDocType(e.target.value)}
-              style={styles.select}
-            >
-              <option value="auto">Auto (from command)</option>
-              <option value="resume">Resume</option>
-              <option value="cover">Cover Letter</option>
-              <option value="both">Both</option>
-            </select>
-          </div>
-
-          <div style={styles.row}>
-            <label style={styles.label}>Profile</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={useProfile}
-                  onChange={(e) => setUseProfile(e.target.checked)}
+        <div className="two-col" style={styles.layoutGrid}>
+          {/* LEFT: Job Description card */}
+          <div className="sticky-col" style={styles.leftCol}>
+            <div style={styles.card}>
+              <div style={{ ...styles.outputHeader, borderBottom: "1px solid #e5e7eb" }}>
+                <h3 style={{ margin: 0 }}>🧾 Job Description</h3>
+              </div>
+              <div style={styles.rowCol}>
+                <label style={styles.label}>Paste JD (used to tailor output)</label>
+                <textarea
+                  rows={18}
+                  placeholder="Paste Job Description here…"
+                  value={jdText}
+                  onChange={(e) => setJdText(e.target.value)}
+                  style={{
+                    ...styles.textarea,
+                    minHeight: 520,
+                    maxHeight: "80vh",
+                    overflow: "auto",
+                    outlineOffset: 0,
+                  }}
                 />
-                Use my saved profile (inject name/email/phone/links)
-              </label>
-              <a href="/profile" style={{ textDecoration: "none", fontWeight: 600 }}>
-                Edit Profile →
-              </a>
+              </div>
+              <p style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
+                Tip: You can leave this empty; we’ll still generate from your command on the right.
+              </p>
             </div>
           </div>
 
-          <details style={{ marginBottom: 8 }}>
-            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-              Contact overrides (optional)
-            </summary>
-            <p style={{ marginTop: 6, color: "#475569" }}>
-              These apply only to this generation and override your saved profile.
-            </p>
-            <div style={styles.grid2}>
-              {[
-                ["full_name", "Full name"],
-                ["email", "Email"],
-                ["phone", "Phone"],
-                ["location", "Location"],
-                ["linkedin", "LinkedIn URL"],
-                ["github", "GitHub URL"],
-                ["portfolio", "Portfolio URL"],
-              ].map(([k, label]) => (
+          {/* RIGHT: Controls + Results */}
+          <div style={styles.rightCol}>
+            <div style={styles.card}>
+              <div style={styles.row}>
+                <label style={styles.label}>Your Command</label>
                 <input
-                  key={k}
-                  placeholder={label}
-                  value={overrides[k]}
-                  onChange={(e) =>
-                    setOverrides((o) => ({ ...o, [k]: e.target.value }))
-                  }
+                  type="text"
+                  placeholder={`e.g., "Generate a resume for mid-level Data Analyst"`}
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
                   style={styles.input}
                 />
-              ))}
-            </div>
-          </details>
+              </div>
 
-          <div style={styles.rowCol}>
-            <label style={styles.label}>(Optional) Paste Job Description</label>
-            <textarea
-              rows={6}
-              placeholder="Paste JD here to tailor output"
-              value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-              style={styles.textarea}
-            />
+              <div style={styles.row}>
+                <label style={styles.label}>Type</label>
+                <select
+                  value={docType}
+                  onChange={(e) => setDocType(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="auto">Auto (from command)</option>
+                  <option value="resume">Resume</option>
+                  <option value="cover">Cover Letter</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+
+              <div style={styles.row}>
+                <label style={styles.label}>Profile</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={useProfile}
+                      onChange={(e) => setUseProfile(e.target.checked)}
+                    />
+                    Use my saved profile (inject name/email/phone/links)
+                  </label>
+                  <a href="/profile" style={{ textDecoration: "none", fontWeight: 600 }}>
+                    Edit Profile →
+                  </a>
+                </div>
+              </div>
+
+              <details style={{ marginBottom: 8 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+                  Contact overrides (optional)
+                </summary>
+                <p style={{ marginTop: 6, color: "#475569" }}>
+                  These apply only to this generation and override your saved profile.
+                </p>
+                <div style={styles.grid2}>
+                  {[
+                    ["full_name", "Full name"],
+                    ["email", "Email"],
+                    ["phone", "Phone"],
+                    ["location", "Location"],
+                    ["linkedin", "LinkedIn URL"],
+                    ["github", "GitHub URL"],
+                    ["portfolio", "Portfolio URL"],
+                  ].map(([k, label]) => (
+                    <input
+                      key={k}
+                      placeholder={label}
+                      value={overrides[k]}
+                      onChange={(e) =>
+                        setOverrides((o) => ({ ...o, [k]: e.target.value }))
+                      }
+                      style={styles.input}
+                    />
+                  ))}
+                </div>
+              </details>
+
+              <button onClick={onGenerate} disabled={loading} style={styles.primaryBtn}>
+                {loading ? "Generating…" : "Generate"}
+              </button>
+
+              {error && (
+                <div style={styles.error}>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{safeText(error)}</pre>
+                </div>
+              )}
+            </div>
+
+            {(resumeText || coverText) && (
+              <div style={{ display: "grid", gap: 20, marginTop: 16 }}>
+                {resumeText && (
+                  <div style={styles.outputCard}>
+                    <div style={styles.outputHeader}>
+                      <h3 style={{ margin: 0 }}>📄 Resume</h3>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button style={styles.ghostBtn} onClick={saveToLibrary}>💾 Save</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadDOCX("generated_resume", resumeText)}>📃 DOCX</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadTXT("generated_resume", resumeText)}>📝 TXT</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadPDF("generated_resume", resumeText)}>📄 PDF</button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={resumeText}
+                      readOnly
+                      style={{ ...styles.outputArea, minHeight: 440 }}
+                    />
+                  </div>
+                )}
+
+                {coverText && (
+                  <div style={styles.outputCard}>
+                    <div style={styles.outputHeader}>
+                      <h3 style={{ margin: 0 }}>💌 Cover Letter</h3>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button style={styles.ghostBtn} onClick={saveToLibrary}>💾 Save</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadDOCX("generated_cover_letter", coverText)}>📃 DOCX</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadTXT("generated_cover_letter", coverText)}>📝 TXT</button>
+                        <button style={styles.ghostBtn} onClick={() => downloadPDF("generated_cover_letter", coverText)}>📄 PDF</button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={coverText}
+                      readOnly
+                      style={{ ...styles.outputArea, minHeight: 440 }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          <button onClick={onGenerate} disabled={loading} style={styles.primaryBtn}>
-            {loading ? "Generating…" : "Generate"}
-          </button>
-
-          {error && (
-            <div style={styles.error}>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{safeText(error)}</pre>
-            </div>
-          )}
         </div>
-
-        {(resumeText || coverText) && (
-          <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
-            {resumeText && (
-              <div style={styles.outputCard}>
-                <div style={styles.outputHeader}>
-                  <h3 style={{ margin: 0 }}>📄 Resume</h3>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={styles.ghostBtn} onClick={saveToLibrary}>
-                      💾 Save
-                    </button>
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadDOCX("generated_resume", resumeText)}
-                    >
-                      📃 DOCX
-                    </button>
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadTXT("generated_resume", resumeText)}
-                    >
-                      📝 TXT
-                    </button>
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadPDF("generated_resume", resumeText)}
-                    >
-                      📄 PDF
-                    </button>
-                  </div>
-                </div>
-                <textarea value={resumeText} readOnly style={styles.outputArea} />
-              </div>
-            )}
-
-            {coverText && (
-              <div style={styles.outputCard}>
-                <div style={styles.outputHeader}>
-                  <h3 style={{ margin: 0 }}>💌 Cover Letter</h3>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={styles.ghostBtn} onClick={saveToLibrary}>
-                      💾 Save
-                    </button>
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadDOCX("generated_cover_letter", coverText)}
-                    >
-                      📃 DOCX
-                    </button>
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadTXT("generated_cover_letter", coverText)}
-                    >
-                      📝 TXT
-                    </button>
-
-                    <button
-                      style={styles.ghostBtn}
-                      onClick={() => downloadPDF("generated_cover_letter", coverText)}
-                    >
-                      📄 PDF
-                    </button>
-                  </div>
-                </div>
-                <textarea value={coverText} readOnly style={styles.outputArea} />
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -480,9 +473,24 @@ export default function ResumeCoverGenerator() {
 
 /* -------------------- Styles -------------------- */
 const styles = {
-  page: { minHeight: "100vh", background: "#f6fbff", padding: 24 },
-  container: { maxWidth: 1100, margin: "0 auto" },
+  page: { minHeight: "100vh", background: "#f6fbff", padding: 16 },
+  container: { maxWidth: 1440, margin: "0 auto" },
   title: { margin: 0, marginBottom: 12, color: "#0f172a" },
+
+  // wider 2-col with larger left panel
+  layoutGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(380px, 1.25fr) 1.75fr",
+    gap: 20,
+    alignItems: "start",
+  },
+  leftCol: {
+    position: "sticky",
+    top: 12,
+    alignSelf: "start",
+  },
+  rightCol: { display: "grid", gap: 16 },
+
   card: {
     background: "#fff",
     border: "1px solid #e5e7eb",
@@ -505,19 +513,42 @@ const styles = {
     marginTop: 8,
   },
   label: { fontWeight: 600, color: "#0f172a" },
-  input: { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1" },
-  select: { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1" },
+
+  // overflow-safe controls
+  input: {
+    width: "100%",
+    padding: 10,
+    borderRadius: 8,
+    border: "1px solid #cbd5e1",
+    boxSizing: "border-box",
+    display: "block",
+    maxWidth: "100%",
+  },
+  select: {
+    width: "100%",
+    padding: 10,
+    borderRadius: 8,
+    border: "1px solid #cbd5e1",
+    boxSizing: "border-box",
+    display: "block",
+    maxWidth: "100%",
+  },
   textarea: {
     width: "100%",
     padding: 10,
     borderRadius: 8,
     border: "1px solid #cbd5e1",
     resize: "vertical",
+    boxSizing: "border-box",
+    display: "block",
+    maxWidth: "100%",
+    outlineOffset: 0,
   },
+
   primaryBtn: {
     width: "100%",
     marginTop: 8,
-    padding: "10px 14px",
+    padding: "12px 16px",
     background: "#0f172a",
     color: "#fff",
     borderRadius: 10,
@@ -550,12 +581,13 @@ const styles = {
   },
   outputArea: {
     width: "100%",
-    minHeight: 280,
+    minHeight: 300,
     border: "none",
     outline: "none",
     padding: 12,
     background: "#fcfcff",
     whiteSpace: "pre-wrap",
+    boxSizing: "border-box",
   },
   ghostBtn: {
     padding: "8px 10px",
