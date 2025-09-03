@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from backend.services.openai_client import OpenAIClient
 import logging
+import re
 
 router = APIRouter()
 client = OpenAIClient()
@@ -37,6 +38,71 @@ class InterviewQuestionsRequest(BaseModel):
 
 class InterviewQuestionsResponse(BaseModel):
     questions: List[str]
+
+
+# NEW: Follow-ups
+class FollowupRequest(BaseModel):
+    question: str = Field(..., max_length=600)
+    answer: str = Field(..., max_length=8000)
+    role: str = Field("Candidate", max_length=120)
+    type: str = Field("behavioral", max_length=60)  # "technical" | "behavioral" | "system design"
+    count: int = Field(4, ge=2, le=8)
+
+
+class FollowupResponse(BaseModel):
+    followups: List[str]
+
+
+# ======== Helpers ========
+
+_LIST_PREFIX_RE = re.compile(r"^\s*([0-9]+[\.)\-:]|\-|\*|•)\s*")
+
+def _normalize_list_output(raw: str) -> List[str]:
+    """
+    Turn a model's multiline output into a clean list of strings:
+    - remove numbering/bullets
+    - drop empties/duplicates
+    """
+    if not raw:
+        return []
+    lines = [l.strip() for l in str(raw).splitlines()]
+    items: List[str] = []
+    seen = set()
+    for l in lines:
+        if not l:
+            continue
+        l = _LIST_PREFIX_RE.sub("", l).strip()
+        if not l:
+            continue
+        if l not in seen:
+            items.append(l)
+            seen.add(l)
+    return items
+
+
+def _fallback_followups(kind: str) -> List[str]:
+    k = (kind or "").lower()
+    if k.startswith("tech"):
+        return [
+            "What trade-offs did you consider in your solution design?",
+            "How did you measure performance and identify bottlenecks?",
+            "If traffic/data grew 10x, what would you change first?",
+            "Describe your testing strategy and how you ensured reliability.",
+        ]
+    if k.startswith("system"):
+        return [
+            "How would you partition data and pick SQL vs NoSQL here?",
+            "Walk me through your caching and cache invalidation approach.",
+            "What is your consistency model and why?",
+            "How would you design monitoring and alerting for this system?",
+        ]
+    # behavioral default
+    return [
+        "What alternatives did you evaluate and why did you choose this approach?",
+        "How did you quantify the impact? Which metric improved?",
+        "What was the biggest risk and how did you mitigate it?",
+        "What would you do differently next time and why?",
+    ]
 
 
 # ======== Endpoints ========
@@ -118,22 +184,51 @@ async def generate_questions(req: InterviewQuestionsRequest):
             system_prompt="You are concise and produce clean lists.",
             temperature=0.6
         )
-
-        # Normalize to a list of questions
-        lines = [l.strip() for l in str(raw).splitlines() if l.strip()]
-        cleaned: List[str] = []
-        for l in lines:
-            # remove leading numbering like "1) ", "1. ", "1 - "
-            cleaned.append(l.lstrip("0123456789.)- \t").strip())
-
-        # keep only requested count and drop empties
-        cleaned = [q for q in cleaned if q][: req.count]
-
+        cleaned = _normalize_list_output(raw)[: req.count]
         if not cleaned:
             raise ValueError("Empty questions from model")
-
         return InterviewQuestionsResponse(questions=cleaned)
-
     except Exception as e:
         logging.exception("❌ Interview question generation error")
         raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
+
+
+# ======== NEW: Follow-up Questions ========
+
+@router.post("/generate-followups", tags=["OpenAI"], response_model=FollowupResponse)
+async def generate_followups(req: FollowupRequest):
+    """
+    Generate smart follow-up interview questions based on a candidate's answer.
+    Compatible with the frontend payload: {question, answer, role, type}.
+    """
+    q = (req.question or "").strip()
+    a = (req.answer or "").strip()
+    if not q or not a:
+        raise HTTPException(status_code=400, detail="question and answer are required")
+
+    prompt = (
+        "You are an expert interviewer. Read the candidate's answer and propose follow-up questions "
+        "that dig deeper into trade-offs, metrics, risks, decision-making, and role fit.\n\n"
+        f"Role: {req.role}\n"
+        f"Interview Type: {req.type}\n\n"
+        f"Original Question:\n{q}\n\n"
+        f"Candidate Answer:\n{a}\n\n"
+        f"Now generate {req.count} concise follow-up questions.\n"
+        "Return a numbered list, one question per line. Do not include explanations."
+    )
+
+    try:
+        raw = client.get_completion(
+            prompt=prompt,
+            system_prompt="You are concise and probing; return only follow-up questions.",
+            temperature=0.5,
+        )
+        items = _normalize_list_output(raw)
+        if not items:
+            # safe fallback
+            items = _fallback_followups(req.type)
+        return FollowupResponse(followups=items[: req.count])
+    except Exception as e:
+        logging.exception("❌ Follow-up generation error")
+        # graceful fallback rather than 500, so UX is smoother
+        return FollowupResponse(followups=_fallback_followups(req.type)[: req.count])

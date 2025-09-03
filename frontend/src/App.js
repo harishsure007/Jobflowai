@@ -27,8 +27,8 @@ import JobPostingsPage from "./DashboardPages/JobPostingsPage";
 import HelpPage from "./pages/HelpPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 
-
-
+// ✅ Add this import
+import MockMatePage from "./DashboardPages/MockMate";
 
 // Placeholder Component
 const PlaceholderPage = ({ title, message }) => (
@@ -63,21 +63,19 @@ function App() {
           <Route path="/reset-password" element={<Layout><ResetPassword /></Layout>} />
           <Route path="/resume-cover-generator" element={<ResumeCoverGenerator />} />
           <Route path="/profile" element={<ProfilePage />} />
-
-
           <Route path="/settings/password" element={<ChangePasswordPage />} />
 
-
+          {/* Jobs list under dashboard layout */}
           <Route
-          path="/dashboard/jobs"
-          element={
-            <DashboardLayout>
-              <JobPostingsPage />
-            </DashboardLayout>
-          }
-        />
+            path="/dashboard/jobs"
+            element={
+              <DashboardLayout>
+                <JobPostingsPage />
+              </DashboardLayout>
+            }
+          />
 
-          {/* Dashboard landing (keep sidebar here only) */}
+          {/* Dashboard landing (with sidebar) */}
           <Route
             path="/dashboard"
             element={
@@ -128,7 +126,7 @@ function App() {
               </DashboardLayout>
             }
           />
-          {/* 👇 NEW: Resume Parser (paste OR upload) */}
+          {/* 👇 Resume Parser (paste OR upload) */}
           <Route
             path="/resume-parser"
             element={
@@ -145,6 +143,17 @@ function App() {
               </DashboardLayout>
             }
           />
+
+          {/* ✅ NEW: MockMate route */}
+          <Route
+            path="/mockmate"
+            element={
+              <DashboardLayout noSidebar>
+                <MockMatePage />
+              </DashboardLayout>
+            }
+          />
+
 
           {/* OAuth placeholders */}
           <Route

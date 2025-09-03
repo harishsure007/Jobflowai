@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
@@ -53,6 +53,7 @@ from backend.routes import (  # noqa: E402
 )
 from backend.routes.profile import router as profile_router  # noqa: E402
 from backend.routes.jobs_debug import router as jobs_debug_router  # noqa: E402
+from backend.routes.news import router as news_router  # <-- NEW (RSS → JSON headlines)
 
 # -----------
 # CORS
@@ -97,9 +98,20 @@ if USE_AUTH_MIDDLEWARE:
             excluded_paths={
                 "/", "/health",
                 "/openapi.json", "/docs", "/redoc", "/favicon.ico",
-                "/api/v1/auth/login", "/api/v1/auth/signup",
-                "/api/v1/auth/refresh", "/api/v1/auth/reset", "/api/v1/auth/otp",
-                "/api/v1/resume-cover",           # PUBLIC generator
+
+                # Public JWT endpoints
+                "/api/v1/auth/login",
+                "/api/v1/auth/signup",
+                "/api/v1/auth/refresh",
+
+                # Public reset/OTP endpoints (match auth_reset.py)
+                "/api/v1/auth/forgot-otp",
+                "/api/v1/auth/verify-otp",
+                "/api/v1/auth/reset-with-otp",
+
+                # Public generators / news
+                "/api/v1/resume-cover",
+                "/api/v1/news/jobs",
                 # (keep /api/v1/resume-cover/save protected)
             },
         )
@@ -113,7 +125,7 @@ else:
 # OPTIONAL: log auth header presence
 # ------------------------------------------------
 @app.middleware("http")
-async def log_auth_header(request, call_next):
+async def log_auth_header(request: Request, call_next):
     auth_present = bool(request.headers.get("authorization"))
     logging.info("REQ %s %s  Auth? %s", request.method, request.url.path, auth_present)
     response = await call_next(request)
@@ -130,8 +142,9 @@ app.include_router(feedback.router,      prefix="/api/v1")
 app.include_router(parse.router,         prefix="/api/v1")
 
 # Auth (JWT + reset/otp)
-app.include_router(auth_reset.router,    prefix="/api/v1", tags=["Auth (Reset)"])
-app.include_router(auth_routes.router,   prefix="/api/v1", tags=["Auth (JWT)"])
+# ⬇️ Mount reset/OTP under /api/v1/auth so frontend /auth/* hits /api/v1/auth/*
+app.include_router(auth_reset.router,    prefix="/api/v1/auth", tags=["Auth (Reset)"])
+app.include_router(auth_routes.router,   prefix="/api/v1",      tags=["Auth (JWT)"])
 
 # Resume/Cover generator — "/resume-cover" (PUBLIC) and "/resume-cover/save" (PROTECTED)
 app.include_router(resume_cover_router,  prefix="/api/v1")
@@ -139,6 +152,9 @@ app.include_router(resume_cover_router,  prefix="/api/v1")
 # Jobs + profile + debug
 app.include_router(jobs.router,          prefix="/api/v1")
 app.include_router(profile_router,       prefix="/api/v1")
+
+# News (RSS aggregator)  <-- NEW
+app.include_router(news_router)
 
 # jobs_debug_router usually has its own explicit prefix (e.g., "/api/v1/_debug")
 app.include_router(jobs_debug_router)

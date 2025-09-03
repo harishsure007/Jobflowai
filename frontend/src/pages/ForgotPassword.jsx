@@ -25,6 +25,11 @@ export default function ForgotPassword() {
     return () => clearInterval(id);
   }, [cooldown]);
 
+  // Clear OTP digits if user goes back to step 1
+  useEffect(() => {
+    if (step === 1) setCode(["", "", "", "", "", ""]);
+  }, [step]);
+
   // Passwords
   const [pwd, setPwd] = useState({ a: "", b: "" });
   const [showPw, setShowPw] = useState(false);
@@ -40,7 +45,8 @@ export default function ForgotPassword() {
     if (!email || !email.includes("@")) return setError("Please enter a valid email address.");
     setLoading(true);
     try {
-      await apiRequest("/auth/forgot-otp", "POST", { email });
+      // PUBLIC endpoint -> noAuth: true
+      await apiRequest("/auth/forgot-otp", "POST", { email }, { noAuth: true });
       setOkMsg("If this email exists, we’ve sent a 6-digit code.");
       setStep(2);
       setCooldown(RESEND_SECS);
@@ -58,7 +64,8 @@ export default function ForgotPassword() {
     if (codeValue.length !== 6) return setError("Enter the 6-digit code.");
     setLoading(true);
     try {
-      await apiRequest("/auth/verify-otp", "POST", { email, code: codeValue });
+      // PUBLIC endpoint -> noAuth: true
+      await apiRequest("/auth/verify-otp", "POST", { email, code: codeValue }, { noAuth: true });
       setOkMsg("Code verified. Please set a new password.");
       setStep(3);
     } catch (err) {
@@ -75,7 +82,13 @@ export default function ForgotPassword() {
     if (pwd.a !== pwd.b) return setError("Passwords do not match.");
     setLoading(true);
     try {
-      await apiRequest("/auth/reset-with-otp", "POST", { email, code: codeValue, newPassword: pwd.a });
+      // PUBLIC endpoint -> noAuth: true
+      await apiRequest(
+        "/auth/reset-with-otp",
+        "POST",
+        { email, code: codeValue, newPassword: pwd.a },
+        { noAuth: true }
+      );
       setOkMsg("Password updated. You can now sign in.");
       setTimeout(() => navigate("/login"), 800);
     } catch (err) {
@@ -91,7 +104,8 @@ export default function ForgotPassword() {
     if (!email) return setError("Missing email. Go back and enter your email.");
     setLoading(true);
     try {
-      await apiRequest("/auth/forgot-otp", "POST", { email });
+      // PUBLIC endpoint -> noAuth: true
+      await apiRequest("/auth/forgot-otp", "POST", { email }, { noAuth: true });
       setOkMsg("We’ve sent a new 6-digit code.");
       setCooldown(RESEND_SECS);
     } catch (err) {
