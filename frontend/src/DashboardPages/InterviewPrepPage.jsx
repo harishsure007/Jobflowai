@@ -23,15 +23,10 @@ async function extractTextFromFile(file) {
 
   // 2) PDF (use local worker to avoid CDN/CORS/version issues)
   if (type === "application/pdf" || name.endsWith(".pdf")) {
-    // Use the legacy browser build (stable API surface)
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf");
-
-    // Choose worker based on installed major version
     const ver = String(pdfjsLib.version || "5.0.0");
     const major = parseInt(ver.split(".")[0], 10) || 5;
     const workerPath = major >= 5 ? "/pdf.worker.min.mjs" : "/pdf.worker.min.js";
-
-    // Point to local /public worker file
     pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
 
     const loadingTask = pdfjsLib.getDocument({ data: buf });
@@ -60,7 +55,7 @@ async function extractTextFromFile(file) {
   }
 
   if (type === "application/msword" || name.endsWith(".doc")) {
-    throw new Error("Old .doc files aren’t supported in browser. Please save as .docx and retry.");
+    throw new Error("Please save .doc as .docx and retry.");
   }
 
   throw new Error("Unsupported file type. Please upload .txt, .pdf, or .docx.");
@@ -109,6 +104,7 @@ export default function InterviewPrepPage() {
 
   // Follow-ups & Keywords state
   const [followups, setFollowups] = useState([]);
+  theLoadingFix();
   const [loadingFollowups, setLoadingFollowups] = useState(false);
 
   const [keywords, setKeywords] = useState({ matched: [], missing: [], extras: [] });
@@ -118,6 +114,8 @@ export default function InterviewPrepPage() {
     loadSaved();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function theLoadingFix() {} // no-op; avoids accidental dangling expressions in edits
 
   async function loadSaved() {
     setSavedLoading(true);
@@ -388,274 +386,287 @@ export default function InterviewPrepPage() {
 
   return (
     <div style={styles.page}>
-      {/* Left column: Resume / JD */}
-      <div style={styles.leftPane}>
-        <h3 style={{ marginTop: 0 }}>📄 Resume</h3>
-        <input
-          type="file"
-          accept=".txt,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          onChange={handleResumeUpload}
-        />
-        <div style={styles.help}>Supported: TXT, PDF, DOCX (old .DOC not supported in-browser)</div>
-        <textarea
-          placeholder="Paste or upload resume..."
-          value={resumeText}
-          onChange={(e) => setResumeText(e.target.value)}
-          style={styles.longTextarea}
-        />
+      {/* Left sidebar */}
+      <aside style={styles.leftPane}>
+        <div style={styles.sidebarSection}>
+          <div style={styles.sidebarTitle}>📄 Resume</div>
+          <input
+            type="file"
+            accept=".txt,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={handleResumeUpload}
+          />
+          <div style={styles.help}>Supported: TXT, PDF, DOCX</div>
+          <textarea
+            placeholder="Paste or upload resume..."
+            value={resumeText}
+            onChange={(e) => setResumeText(e.target.value)}
+            style={styles.longTextarea}
+          />
+        </div>
 
-        <h3>📌 Job Description</h3>
-        <input
-          type="file"
-          accept=".txt,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          onChange={handleJDUpload}
-        />
-        <div style={styles.help}>Supported: TXT, PDF, DOCX (old .DOC not supported in-browser)</div>
-        <textarea
-          placeholder="Paste or upload job description..."
-          value={jdText}
-          onChange={(e) => setJdText(e.target.value)}
-          style={styles.longTextarea}
-        />
-      </div>
+        <div style={{ height: 16 }} />
 
-      {/* Right column: Controls / Qs / Answer / Feedback */}
-      <div style={styles.rightPane}>
-        <h2 style={styles.header}>🧠 Interview Prep</h2>
+        <div style={styles.sidebarSection}>
+          <div style={styles.sidebarTitle}>📌 Job Description</div>
+          <input
+            type="file"
+            accept=".txt,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={handleJDUpload}
+          />
+          <div style={styles.help}>Supported: TXT, PDF, DOCX</div>
+          <textarea
+            placeholder="Paste or upload job description..."
+            value={jdText}
+            onChange={(e) => setJdText(e.target.value)}
+            style={styles.longTextarea}
+          />
+        </div>
+      </aside>
+
+      {/* Right main */}
+      <main style={styles.rightPane}>
+        <div style={styles.pageHeader}>
+          <h2 style={styles.header}>🧠 Interview Prep</h2>
+        </div>
 
         {errorMsg && <div style={styles.errorBox}>{errorMsg}</div>}
 
-        {/* Role (manual) */}
-        <div style={styles.formGroup}>
-          <label>Role (type manually):</label>
-          <input
-            type="text"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="e.g. Data Analyst"
-            style={styles.input}
-          />
-        </div>
-
-        {/* Question Type segmented control */}
-        <div style={styles.formGroup}>
-          <label>Question Type:</label>
-          <div style={styles.segment}>
-            <button
-              type="button"
-              onClick={() => setQuestionType("behavioral")}
-              style={questionType === "behavioral" ? styles.segmentBtnActive : styles.segmentBtn}
-            >
-              🧍 Behavioral
-            </button>
-            <button
-              type="button"
-              onClick={() => setQuestionType("technical")}
-              style={questionType === "technical" ? styles.segmentBtnActive : styles.segmentBtn}
-            >
-              💻 Technical
-            </button>
-            <button
-              type="button"
-              onClick={() => setQuestionType("system design")}
-              style={questionType === "system design" ? styles.segmentBtnActive : styles.segmentBtn}
-            >
-              🧱 System Design
-            </button>
-          </div>
-        </div>
-
-        {/* Interview Question input + Generate Questions (inline) */}
-        <div style={styles.formGroup}>
-          <label>Interview Question (or pick from list):</label>
-          <div style={styles.inlineRow}>
+        {/* Card: Role & Question Type */}
+        <section style={styles.card}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Role (type manually):</label>
             <input
               type="text"
-              value={question}
-              onChange={(e) => {
-                setQuestion(e.target.value);
-                setActiveIdx(null);
-              }}
-              placeholder="e.g. How do you handle conflict?"
-              style={{ ...styles.input, flex: 1 }}
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              placeholder="e.g. Data Analyst"
+              style={styles.input}
             />
-            <button onClick={generateQuestions} style={styles.secondaryBtn} disabled={loadingQs}>
-              {loadingQs ? "Generating…" : "✨ Generate Questions"}
-            </button>
           </div>
-          <div style={styles.smallHelp}>Type your own question or click “Generate Questions”.</div>
-        </div>
 
-        {/* Questions List */}
-        {questions.length > 0 && (
-          <div style={styles.questionsBox}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Suggested Questions</div>
-            <div>
-              {questions.map((q, i) => (
-                <div
-                  key={i}
-                  onClick={() => {
-                    setActiveIdx(i);
-                    setQuestion("");
-                    setFeedback(null);
-                    setSavedId(null);
-                    setAnswer("");
-                    setStar({ s: "", t: "", a: "", r: "" }); // reset STAR
-                    setFollowups([]);
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    marginBottom: 8,
-                    borderRadius: 8,
-                    border: activeIdx === i ? "2px solid #4f46e5" : "1px solid #e5e7eb",
-                    background: activeIdx === i ? "#eef2ff" : "#fff",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontSize: 12, color: "#6b7280" }}>Q{i + 1}</div>
-                  <div style={{ fontWeight: 500 }}>{q}</div>
-                </div>
-              ))}
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Question Type:</label>
+            <div style={styles.segment}>
+              <button
+                type="button"
+                onClick={() => setQuestionType("behavioral")}
+                style={questionType === "behavioral" ? styles.segmentBtnActive : styles.segmentBtn}
+              >
+                🧍 Behavioral
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuestionType("technical")}
+                style={questionType === "technical" ? styles.segmentBtnActive : styles.segmentBtn}
+              >
+                💻 Technical
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuestionType("system design")}
+                style={questionType === "system design" ? styles.segmentBtnActive : styles.segmentBtn}
+              >
+                🧱 System Design
+              </button>
             </div>
           </div>
-        )}
+        </section>
 
-        {/* Actions: bottom row (removed duplicate Generate Questions) */}
-        <div style={{ display: "flex", gap: 10, marginTop: 8, marginBottom: 8, flexWrap: "wrap" }}>
-          <button onClick={handleGenerate} style={styles.generateButton} disabled={loadingDraft}>
-            {loadingDraft ? "🚀 Drafting…" : "🚀 Auto-Draft Answer"}
-          </button>
-
-          <button
-            onClick={getFeedback}
-            style={{ ...styles.generateButton, backgroundColor: "#059669" }}
-            disabled={loadingFeedback || (!activeQuestion && !question)}
-          >
-            {loadingFeedback ? "Scoring…" : "✅ Get Feedback & Save"}
-          </button>
-
-          <button
-            onClick={generateFollowups}
-            style={{ ...styles.ghostBtn, background: "#0ea5e9", color: "#fff" }}
-            disabled={loadingFollowups || !answer.trim()}
-          >
-            {loadingFollowups ? "…" : "🔁 Generate Follow-ups"}
-          </button>
-
-          <button onClick={analyzeKeywords} style={styles.ghostBtn} disabled={analyzing}>
-            {analyzing ? "Analyzing…" : "🔎 Analyze Keywords"}
-          </button>
-
-          <button onClick={exportDocx} style={styles.ghostBtn}>
-            📄 Export DOCX
-          </button>
-
-          <button onClick={buildSTAR} style={{ ...styles.ghostBtn, background: "#f59e0b", color: "#fff" }}>
-            ⏩ Insert STAR Answer
-          </button>
-        </div>
-
-        {/* Keyword Gap chips */}
-        {(keywords.matched.length || keywords.missing.length || keywords.extras.length) && (
-          <div style={{ ...styles.formGroup, marginTop: 6 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <ChipGroup title="Matched" color="#10b981" items={keywords.matched} />
-              <ChipGroup title="Missing" color="#ef4444" items={keywords.missing} />
-              <ChipGroup title="Extras" color="#6366f1" items={keywords.extras} />
+        {/* Card: Question input */}
+        <section style={styles.card}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Interview Question (or pick from list):</label>
+            <div style={styles.inlineRow}>
+              <input
+                type="text"
+                value={question}
+                onChange={(e) => {
+                  setQuestion(e.target.value);
+                  setActiveIdx(null);
+                }}
+                placeholder="e.g. How do you handle conflict?"
+                style={{ ...styles.input, flex: 1 }}
+              />
+              <button onClick={generateQuestions} style={styles.btnPrimary} disabled={loadingQs}>
+                {loadingQs ? "Generating…" : "✨ Generate Questions"}
+              </button>
             </div>
-            {keywords.missing.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <button style={{ ...styles.smallBtn, background: "#111827" }} onClick={insertMissingIntoAnswer}>
-                  ➕ Insert Missing Skills into Answer
-                </button>
+            <div style={styles.smallHelp}>Type your own question or click “Generate Questions”.</div>
+          </div>
+
+          {/* Questions List */}
+          {questions.length > 0 && (
+            <div style={styles.questionsBox}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Suggested Questions</div>
+              <div>
+                {questions.map((q, i) => (
+                  <div
+                    key={i}
+                    onClick={() => {
+                      setActiveIdx(i);
+                      setQuestion("");
+                      setFeedback(null);
+                      setSavedId(null);
+                      setAnswer("");
+                      setStar({ s: "", t: "", a: "", r: "" }); // reset STAR
+                      setFollowups([]);
+                    }}
+                    style={{
+                      padding: "10px 12px",
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      border: activeIdx === i ? "2px solid #2563eb" : "1px solid #e5e7eb",
+                      background: activeIdx === i ? "#eff6ff" : "#fff",
+                      cursor: "pointer",
+                    }}
+                    title="Use this question"
+                  >
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>Q{i + 1}</div>
+                    <div style={{ fontWeight: 600 }}>{q}</div>
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </section>
 
-        {/* STAR scaffold */}
-        <div style={{ ...styles.formGroup, marginTop: 6 }}>
-          <label style={{ fontWeight: 600 }}>STAR Scaffold</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <input
-              style={styles.input}
-              placeholder="Situation"
-              value={star.s}
-              onChange={(e) => setStar((st) => ({ ...st, s: e.target.value }))}
-            />
-            <input
-              style={styles.input}
-              placeholder="Task"
-              value={star.t}
-              onChange={(e) => setStar((st) => ({ ...st, t: e.target.value }))}
-            />
-            <input
-              style={styles.input}
-              placeholder="Action"
-              value={star.a}
-              onChange={(e) => setStar((st) => ({ ...st, a: e.target.value }))}
-            />
-            <input
-              style={styles.input}
-              placeholder="Result"
-              value={star.r}
-              onChange={(e) => setStar((st) => ({ ...st, r: e.target.value }))}
-            />
-          </div>
-          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-            <button style={styles.ghostBtn} onClick={buildSTAR}>
-              ⇢ Insert into Answer
+        {/* Card: Actions */}
+        <section style={styles.card}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={handleGenerate} style={styles.btnPrimary} disabled={loadingDraft}>
+              {loadingDraft ? "🚀 Drafting…" : "🚀 Auto-Draft Answer"}
             </button>
-            <div style={{ fontSize: 12, color: "#6b7280", alignSelf: "center" }}>
-              Tip: Use short bullet phrases—then refine in the Answer box.
+
+            <button
+              onClick={getFeedback}
+              style={styles.btnSuccess}
+              disabled={loadingFeedback || (!activeQuestion && !question)}
+            >
+              {loadingFeedback ? "Scoring…" : "✅ Get Feedback & Save"}
+            </button>
+
+            <button
+              onClick={generateFollowups}
+              style={styles.btnInfo}
+              disabled={loadingFollowups || !answer.trim()}
+            >
+              {loadingFollowups ? "…" : "🔁 Generate Follow-ups"}
+            </button>
+
+            <button onClick={analyzeKeywords} style={styles.btnNeutral} disabled={analyzing}>
+              {analyzing ? "Analyzing…" : "🔎 Analyze Keywords"}
+            </button>
+
+            <button onClick={exportDocx} style={styles.btnNeutral}>
+              📄 Export DOCX
+            </button>
+
+            <button onClick={buildSTAR} style={styles.btnWarning}>
+              ⏩ Insert STAR Answer
+            </button>
+          </div>
+        </section>
+
+        {/* Card: STAR scaffold */}
+        <section style={styles.card}>
+          <div style={{ ...styles.formGroup, marginTop: 6 }}>
+            <label style={{ ...styles.label, fontWeight: 700 }}>STAR Scaffold</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <input
+                style={styles.input}
+                placeholder="Situation"
+                value={star.s}
+                onChange={(e) => setStar((st) => ({ ...st, s: e.target.value }))}
+              />
+              <input
+                style={styles.input}
+                placeholder="Task"
+                value={star.t}
+                onChange={(e) => setStar((st) => ({ ...st, t: e.target.value }))}
+              />
+              <input
+                style={styles.input}
+                placeholder="Action"
+                value={star.a}
+                onChange={(e) => setStar((st) => ({ ...st, a: e.target.value }))}
+              />
+              <input
+                style={styles.input}
+                placeholder="Result"
+                value={star.r}
+                onChange={(e) => setStar((st) => ({ ...st, r: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center" }}>
+              <button style={styles.btnGhost} onClick={buildSTAR}>
+                ⇢ Insert into Answer
+              </button>
+              <div style={styles.smallHelp}>Tip: Use short bullet phrases—then refine in the Answer box.</div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Your Answer (editable) */}
-        <div style={styles.formGroup}>
-          <label>Your Answer:</label>
-          <textarea
-            rows={8}
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            placeholder="Type your answer here (or click Auto-Draft above)"
-            style={styles.textarea}
-          />
-          {/* length meter */}
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>
-            {wordCount} words • ~{speakMinutes} min spoken
+        {/* Card: Your Answer */}
+        <section style={styles.card}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Your Answer:</label>
+            <textarea
+              rows={8}
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              placeholder="Type your answer here (or click Auto-Draft above)"
+              style={styles.textarea}
+            />
+            <div style={styles.meter}>{wordCount} words • ~{speakMinutes} min spoken</div>
           </div>
-        </div>
 
-        {/* Feedback card + Follow-ups */}
+          {/* Keyword chips */}
+          {(keywords.matched.length || keywords.missing.length || keywords.extras.length) && (
+            <div style={{ ...styles.formGroup, marginTop: 6 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <ChipGroup title="Matched" color="#10b981" icon="✅" items={keywords.matched} />
+                <ChipGroup title="Missing" color="#ef4444" icon="⚠️" items={keywords.missing} />
+                <ChipGroup title="Extras" color="#6366f1" icon="➕" items={keywords.extras} />
+              </div>
+              {keywords.missing.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <button style={styles.btnDark} onClick={insertMissingIntoAnswer}>
+                    ➕ Insert Missing Skills into Answer
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Card: Feedback */}
         {feedback && (
-          <div style={styles.feedbackCard}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <section style={styles.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h4 style={{ margin: 0 }}>Feedback</h4>
-              <div style={{ fontWeight: 600 }}>Score: {feedback.score}/10</div>
+              <ScoreBadge score={feedback.score} />
             </div>
 
             {Array.isArray(feedback.strengths) && feedback.strengths.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 600 }}>Strengths</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 700 }}>Strengths</div>
                 <ul>{feedback.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
               </div>
             )}
 
             {Array.isArray(feedback.improvements) && feedback.improvements.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 600 }}>Improvements</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 700 }}>Improvements</div>
                 <ul>{feedback.improvements.map((s, i) => <li key={i}>{s}</li>)}</ul>
               </div>
             )}
 
             {feedback.improved_answer && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 600 }}>Improved Answer</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 700 }}>Improved Answer</div>
                 <p style={{ whiteSpace: "pre-wrap" }}>{feedback.improved_answer}</p>
                 <button
-                  style={{ ...styles.smallBtn, marginTop: 8 }}
+                  style={{ ...styles.btnDark, marginTop: 8 }}
                   onClick={() => setAnswer(feedback.improved_answer)}
                 >
                   Use Improved Answer
@@ -665,8 +676,8 @@ export default function InterviewPrepPage() {
 
             {/* Follow-ups list */}
             {followups.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Follow-up Questions</div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Follow-up Questions</div>
                 <div>
                   {followups.map((fq, i) => (
                     <div
@@ -679,14 +690,7 @@ export default function InterviewPrepPage() {
                         setFeedback(null);
                         window.scrollTo({ top: 0, behavior: "smooth" });
                       }}
-                      style={{
-                        padding: "10px 12px",
-                        marginBottom: 8,
-                        borderRadius: 8,
-                        border: "1px solid #e5e7eb",
-                        background: "#fff",
-                        cursor: "pointer",
-                      }}
+                      style={styles.followupItem}
                       title="Click to make this your next question"
                     >
                       {fq}
@@ -695,14 +699,14 @@ export default function InterviewPrepPage() {
                 </div>
               </div>
             )}
-          </div>
+          </section>
         )}
 
-        {/* ---------- Saved Feedback (same page) ---------- */}
-        <div style={{ marginTop: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Card: Saved Feedback */}
+        <section style={styles.card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
             <h3 style={{ margin: 0 }}>💾 Saved Feedback (DB)</h3>
-            <button onClick={loadSaved} style={styles.ghostBtn} disabled={savedLoading}>
+            <button onClick={loadSaved} style={styles.btnGhost} disabled={savedLoading}>
               {savedLoading ? "Refreshing…" : "Refresh"}
             </button>
           </div>
@@ -714,7 +718,7 @@ export default function InterviewPrepPage() {
           ) : savedList.length === 0 ? (
             <p style={{ color: "#6b7280" }}>No saved feedback yet.</p>
           ) : (
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, marginTop: 10 }}>
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, marginTop: 10, overflow: "hidden" }}>
               {savedList.map((row) => {
                 const isOpen = openRowId === row.id;
                 const isHighlight = savedId && savedId === row.id;
@@ -728,21 +732,21 @@ export default function InterviewPrepPage() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 600 }}>#{row.id}</div>
+                      <div style={{ fontWeight: 700 }}>#{row.id}</div>
                       <div style={{ color: "#6b7280" }}>
                         {row.created_at ? new Date(row.created_at).toLocaleString() : "-"}
                       </div>
                     </div>
-                    <div style={{ marginTop: 6, fontWeight: 600 }}>Question</div>
+                    <div style={{ marginTop: 6, fontWeight: 700 }}>Question</div>
                     <div title={row.question}>{truncate(row.question, 120)}</div>
 
                     <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <button onClick={() => setOpenRowId(isOpen ? null : row.id)} style={styles.smallBtn}>
+                      <button onClick={() => setOpenRowId(isOpen ? null : row.id)} style={styles.btnGhost}>
                         {isOpen ? "Hide Details" : "View Details"}
                       </button>
                       <button
                         onClick={() => deleteSaved(row.id)}
-                        style={{ ...styles.smallBtn, background: "#ef4444" }}
+                        style={styles.btnDanger}
                       >
                         Delete
                       </button>
@@ -750,9 +754,9 @@ export default function InterviewPrepPage() {
 
                     {isOpen && (
                       <div style={{ marginTop: 10 }}>
-                        <div style={{ fontWeight: 600, marginTop: 6 }}>Answer</div>
+                        <div style={{ fontWeight: 700, marginTop: 6 }}>Answer</div>
                         <pre style={styles.pre}>{row.answer}</pre>
-                        <div style={{ fontWeight: 600, marginTop: 6 }}>Feedback</div>
+                        <div style={{ fontWeight: 700, marginTop: 6 }}>Feedback</div>
                         <pre style={styles.pre}>{row.feedback}</pre>
                       </div>
                     )}
@@ -761,25 +765,29 @@ export default function InterviewPrepPage() {
               })}
             </div>
           )}
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }
 
 /* ---------- small components ---------- */
-function ChipGroup({ title, color, items }) {
+function ChipGroup({ title, color, icon, items }) {
   if (!items?.length) return null;
   return (
     <div>
-      <div style={{ fontWeight: 600, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>
+        {title}
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {items.map((x, i) => (
           <span
             key={i}
             style={{
-              display: "inline-block",
-              padding: "4px 10px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 10px",
               borderRadius: 999,
               border: `1px solid ${color}`,
               color,
@@ -787,11 +795,33 @@ function ChipGroup({ title, color, items }) {
               fontSize: 12,
             }}
           >
-            {x}
+            <span>{icon}</span>
+            <span>{x}</span>
           </span>
         ))}
       </div>
     </div>
+  );
+}
+
+function ScoreBadge({ score }) {
+  const n = typeof score === "number" ? score : 0;
+  let bg = "#fee2e2", fg = "#991b1b"; // red
+  if (n >= 7) { bg = "#dcfce7"; fg = "#166534"; }     // green
+  else if (n >= 4) { bg = "#fef3c7"; fg = "#92400e"; } // amber
+  return (
+    <span style={{
+      padding: "6px 10px",
+      borderRadius: 999,
+      background: bg,
+      color: fg,
+      fontWeight: 700,
+      minWidth: 64,
+      textAlign: "center",
+      display: "inline-block"
+    }}>
+      {n}/10
+    </span>
   );
 }
 
@@ -827,60 +857,75 @@ function formatFeedbackForExport(fb) {
   return parts.join("\n");
 }
 
-/* ---------- styles ---------- */
+/* ---------- styles (modern cards & slimmer left sidebar) ---------- */
 const styles = {
   page: {
     display: "flex",
-    padding: "40px",
-    gap: "32px",
+    padding: "20px",
+    gap: "20px",
     backgroundColor: "#f4f6f8",
-    fontFamily: "Segoe UI, sans-serif",
+    fontFamily: "Segoe UI, system-ui, -apple-system, sans-serif",
     minHeight: "100vh",
     alignItems: "flex-start",
     justifyContent: "flex-start",
   },
+
+  /* LEFT */
   leftPane: {
-    width: "38%",
-    backgroundColor: "#ffffff",
-    padding: "20px",
-    borderRadius: "12px",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.08)",
+    width: "20%",                        // slimmer
+    backgroundColor: "#fafafa",
+    padding: "16px",
+    borderRadius: "14px",
+    border: "1px solid #e5e7eb",
+    boxShadow: "0 2px 10px rgba(15,23,42,.05)",
     alignSelf: "flex-start",
+    position: "sticky",
+    top: 20,
   },
+  sidebarSection: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 },
+  sidebarTitle: { fontWeight: 700, marginBottom: 8 },
+
+  /* RIGHT */
   rightPane: {
-    width: "62%",
-    backgroundColor: "#ffffff",
-    padding: "28px",
+    width: "80%",                        // main content
+    backgroundColor: "transparent",
+    padding: 0,
     borderRadius: "12px",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.08)",
     alignSelf: "flex-start",
   },
-  header: { fontSize: "1.6rem", marginBottom: "16px" },
-  formGroup: { marginBottom: "18px" },
-  select: { width: "100%", padding: "10px", fontSize: "1rem", borderRadius: "8px", border: "1px solid #d1d5db" },
-  input: { width: "100%", padding: "12px", fontSize: "1rem", borderRadius: "8px", border: "1px solid #d1d5db", outline: "none" },
+  pageHeader: { marginBottom: 10 },
+  header: { fontSize: "1.6rem", margin: 0, color: "#1f2937" },
+
+  /* Cards */
+  card: {
+    background: "#ffffff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    boxShadow: "0 2px 12px rgba(15,23,42,.06)",
+  },
+
+  /* Forms */
+  formGroup: { marginBottom: 14 },
+  label: { display: "block", fontSize: 14, color: "#374151", marginBottom: 6, fontWeight: 600 },
+  select: { width: "100%", padding: "10px", fontSize: "1rem", borderRadius: "10px", border: "1px solid #d1d5db", background: "#fff" },
+  input: {
+    width: "100%", padding: "12px", fontSize: "1rem",
+    borderRadius: "10px", border: "1px solid #d1d5db", outline: "none", background: "#f9fafb"
+  },
   textarea: {
-    width: "100%",
-    marginTop: "10px",
-    padding: "12px",
-    border: "1px solid #d1d5db",
-    borderRadius: "8px",
-    resize: "vertical",
-    fontSize: "1rem",
-    minHeight: 160,
-    outline: "none",
+    width: "100%", marginTop: "8px", padding: "12px",
+    border: "1px solid #d1d5db", borderRadius: "10px",
+    resize: "vertical", fontSize: "1rem", minHeight: 160, outline: "none", background: "#f9fafb"
   },
   longTextarea: {
-    width: "100%",
-    marginTop: "10px",
-    padding: "12px",
-    border: "1px solid #d1d5db",
-    borderRadius: "8px",
-    resize: "vertical",
-    fontSize: "1rem",
-    minHeight: 320,
-    outline: "none",
+    width: "100%", marginTop: "8px", padding: "10px",
+    border: "1px solid #d1d5db", borderRadius: "10px",
+    resize: "vertical", fontSize: "0.95rem", minHeight: 200, outline: "none", background: "#f9fafb"
   },
+
+  /* Segment control */
   segment: {
     display: "inline-flex",
     gap: 0,
@@ -907,71 +952,85 @@ const styles = {
     cursor: "pointer",
     boxShadow: "0 2px 6px rgba(79,70,229,.25)",
   },
+
   inlineRow: { display: "flex", gap: 10, alignItems: "center" },
   smallHelp: { marginTop: 6, fontSize: 12, color: "#6b7280" },
-  secondaryBtn: {
-    padding: "12px 14px",
+  meter: { fontSize: 12, color: "#6b7280", marginTop: 6 },
+
+  /* Buttons */
+  btnBase: {
+    padding: "12px 16px",
     fontSize: "0.95rem",
-    backgroundColor: "#4f46e5",
-    color: "#fff",
     border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-  generateButton: {
-    padding: "12px 18px",
-    fontSize: "1rem",
-    backgroundColor: "#0078D4",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
+    borderRadius: 10,
     cursor: "pointer",
   },
+  btnPrimary: {
+    padding: "12px 16px", fontSize: "0.95rem", borderRadius: 10, cursor: "pointer",
+    backgroundColor: "#2563eb", color: "#fff", border: "1px solid #1d4ed8",
+  },
+  btnSuccess: {
+    padding: "12px 16px", fontSize: "0.95rem", borderRadius: 10, cursor: "pointer",
+    backgroundColor: "#16a34a", color: "#fff", border: "1px solid #15803d",
+  },
+  btnInfo: {
+    padding: "12px 16px", fontSize: "0.95rem", borderRadius: 10, cursor: "pointer",
+    backgroundColor: "#0ea5e9", color: "#fff", border: "1px solid #0284c7",
+  },
+  btnNeutral: {
+    padding: "12px 16px", fontSize: "0.95rem", borderRadius: 10, cursor: "pointer",
+    backgroundColor: "#f3f4f6", color: "#111827", border: "1px solid #e5e7eb",
+  },
+  btnWarning: {
+    padding: "12px 16px", fontSize: "0.95rem", borderRadius: 10, cursor: "pointer",
+    backgroundColor: "#f59e0b", color: "#fff", border: "1px solid #d97706",
+  },
+  btnDark: {
+    padding: "10px 14px", fontSize: "0.9rem", borderRadius: 10, cursor: "pointer",
+    background: "#111827", color: "#fff", border: "1px solid #0b1220",
+  },
+  btnGhost: {
+    padding: "10px 14px", fontSize: "0.9rem", borderRadius: 10, cursor: "pointer",
+    background: "#fff", color: "#111827", border: "1px solid #e5e7eb",
+  },
+  btnDanger: {
+    padding: "10px 14px", fontSize: "0.9rem", borderRadius: 10, cursor: "pointer",
+    background: "#ef4444", color: "#fff", border: "1px solid #dc2626",
+  },
+
   questionsBox: {
     background: "#fff",
     border: "1px solid #e5e7eb",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 16,
+    marginTop: 8,
   },
-  feedbackCard: {
-    marginTop: "20px",
-    backgroundColor: "#ecfdf5",
-    padding: "16px",
-    borderRadius: "10px",
-    border: "1px solid #a7f3d0",
-  },
-  errorBox: {
-    backgroundColor: "#f8d7da",
-    color: "#842029",
-    padding: "12px",
-    borderRadius: "8px",
-    marginBottom: "20px",
-    border: "1px solid #f5c2c7",
-  },
-  ghostBtn: {
-    padding: "8px 12px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
+
+  followupItem: {
+    padding: "10px 12px",
+    marginBottom: 8,
+    borderRadius: 10,
+    border: "1px solid #e5e7eb",
     background: "#fff",
     cursor: "pointer",
-    fontSize: 14,
   },
-  smallBtn: {
-    padding: "8px 12px",
-    borderRadius: 8,
-    border: "none",
-    background: "#0ea5e9",
-    color: "#fff",
-    cursor: "pointer",
+
+  /* Alerts etc */
+  errorBox: {
+    backgroundColor: "#fef2f2",
+    color: "#991b1b",
+    padding: "12px",
+    borderRadius: "10px",
+    marginBottom: "16px",
+    border: "1px solid #fee2e2",
   },
+
   pre: {
     whiteSpace: "pre-wrap",
     margin: 0,
     background: "#f9fafb",
     border: "1px solid #e5e7eb",
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
   },
   help: { fontSize: 12, color: "#6b7280", marginTop: 6 },

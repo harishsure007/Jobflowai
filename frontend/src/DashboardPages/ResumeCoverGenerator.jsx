@@ -45,7 +45,7 @@ function normalizeError(errLike) {
         .join(" | ");
     } else if (detail && typeof detail === "object") {
       if (detail.msg) {
-        const loc = Array.isArray(detail.loc) ? detail.loc.join(".") : detail.loc;
+        const loc = Array.isArray(detail.loc) ? detail.loc.join(".") : detail.loc; // fixed
         msg = `${loc || "error"}: ${detail.msg}`;
       } else {
         msg = JSON.stringify(detail);
@@ -96,6 +96,9 @@ export default function ResumeCoverGenerator() {
 
   const [resumeText, setResumeText] = useState("");
   const [coverText, setCoverText] = useState("");
+
+  // JD word/character counters
+  const jdWords = jdText.trim() ? jdText.trim().split(/\s+/).length : 0;
 
   /* -------------------- Network helpers -------------------- */
   const getToken = () => {
@@ -299,9 +302,22 @@ export default function ResumeCoverGenerator() {
   return (
     <div style={styles.page}>
       <style>{`
+        /* mobile / tablet keeps your current behavior */
         @media (max-width: 960px) {
           .two-col { grid-template-columns: 1fr !important; }
           .sticky-col { position: static !important; top: auto !important; }
+        }
+
+        /* desktop-only tweaks */
+        @media (min-width: 961px) {
+          /* make left JD column slimmer and right side wider */
+          .two-col { grid-template-columns: minmax(240px, 0.6fr) 2.4fr !important; }
+
+          /* optionally cap the overall left column width to avoid looking too wide on huge screens */
+          .left-col { max-width: 520px; }
+
+          /* gently cap the textarea content width so it never stretches */
+          .jd-textarea { max-width: 520px; }
         }
       `}</style>
 
@@ -310,14 +326,17 @@ export default function ResumeCoverGenerator() {
 
         <div className="two-col" style={styles.layoutGrid}>
           {/* LEFT: Job Description card */}
-          <div className="sticky-col" style={styles.leftCol}>
+          <div className="sticky-col left-col" style={styles.leftCol}>
             <div style={styles.card}>
-              <div style={{ ...styles.outputHeader, borderBottom: "1px solid #e5e7eb" }}>
+              {/* Special header with distinct background */}
+              <div style={styles.jobHeader}>
                 <h3 style={{ margin: 0 }}>🧾 Job Description</h3>
               </div>
+
               <div style={styles.rowCol}>
                 <label style={styles.label}>Paste JD (used to tailor output)</label>
                 <textarea
+                  className="jd-textarea"
                   rows={18}
                   placeholder="Paste Job Description here…"
                   value={jdText}
@@ -331,6 +350,10 @@ export default function ResumeCoverGenerator() {
                   }}
                 />
               </div>
+              {/* Word/character counter */}
+              <p style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>
+                {jdWords} words • {jdText.length} characters
+              </p>
               <p style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
                 Tip: You can leave this empty; we’ll still generate from your command on the right.
               </p>
@@ -477,7 +500,7 @@ const styles = {
   container: { maxWidth: 1440, margin: "0 auto" },
   title: { margin: 0, marginBottom: 12, color: "#0f172a" },
 
-  // wider 2-col with larger left panel
+  // default grid; overridden by the CSS media query on desktop
   layoutGrid: {
     display: "grid",
     gridTemplateColumns: "minmax(380px, 1.25fr) 1.75fr",
@@ -498,6 +521,17 @@ const styles = {
     boxShadow: "0 8px 20px rgba(2,6,23,.05)",
     padding: 16,
   },
+
+  // special header style for the Job Description card
+  jobHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 12px",
+    borderBottom: "1px solid #e5e7eb",
+    background: "#e5e7eb", // light blue
+  },
+
   row: {
     display: "grid",
     gridTemplateColumns: "180px 1fr",
@@ -514,7 +548,6 @@ const styles = {
   },
   label: { fontWeight: 600, color: "#0f172a" },
 
-  // overflow-safe controls
   input: {
     width: "100%",
     padding: 10,

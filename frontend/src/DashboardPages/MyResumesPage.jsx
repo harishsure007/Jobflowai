@@ -5,7 +5,25 @@ import { saveAs } from "file-saver";
 import { Document, Packer, Paragraph } from "docx";
 import jsPDF from "jspdf";
 
-// ---------- tiny dropdown component ----------
+/* ---------------- Local Favorites Storage ---------------- */
+const PINS_KEY = "pinned_resumes_v1";
+const normalizeId = (id) => (id == null ? "" : String(id));
+const loadPins = () => {
+  try {
+    const raw = localStorage.getItem(PINS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set((Array.isArray(arr) ? arr : []).map(normalizeId));
+  } catch {
+    return new Set();
+  }
+};
+const savePins = (setLike) => {
+  try {
+    localStorage.setItem(PINS_KEY, JSON.stringify(Array.from(setLike || [])));
+  } catch {}
+};
+
+/* ---------------- Tiny dropdown component ---------------- */
 function useClickAway(closeFn) {
   const ref = useRef(null);
   useEffect(() => {
@@ -64,7 +82,7 @@ function MenuItem({ onClick, children, danger = false }) {
   );
 }
 
-// Single item + mutate (resume-specific)
+/* ---------------- API helpers ---------------- */
 const RESUME_GET_URL = (id) => `${API_BASE}/api/v1/resume/${id}`;
 const RESUME_DELETE_URL = (id) => `${API_BASE}/api/v1/resume/${id}`;
 const RESUME_RENAME_URL_PRIMARY = (id) => `${API_BASE}/api/v1/resume/${id}/rename`;
@@ -96,7 +114,7 @@ const normalize = (it) => ({
   doc_type: getDocType(it),
 });
 
-// ---------- helpers: filenames + exporters ----------
+/* ---------------- exporters ---------------- */
 const safeName = (t, ext) =>
   `${(t || "document").toString().trim().replace(/[\/\\?%*:|"<>]/g, "").replace(/\s+/g, "_") || "document"}.${ext}`;
 
@@ -143,6 +161,7 @@ const downloadPDF = (title, content) => {
   doc.save(safeName(title || "resume", "pdf"));
 };
 
+/* ==================== Component ==================== */
 export default function MyResumesPage() {
   const [resumes, setResumes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -161,8 +180,8 @@ export default function MyResumesPage() {
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const [showDebug, setShowDebug] = useState(false);
-  const [listUrlUsed, setListUrlUsed] = useState("");
+  // ⭐ favorites
+  const [pinned, setPinned] = useState(() => loadPins());
 
   // Try common list endpoints (favor ones that support doc_type=resume)
   async function listResumes(signal) {
@@ -184,7 +203,7 @@ export default function MyResumesPage() {
         const raw = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : null;
         if (raw) {
           const items = raw.map(normalize).filter((x) => x?.id != null);
-          return { items, used: c.url, params: c.params };
+          return { items };
         }
       } catch (e) {
         if (isCanceled(e)) throw e;
@@ -200,9 +219,8 @@ export default function MyResumesPage() {
     setLoading(true);
     setErrMsg("");
     try {
-      const { items, used } = await listResumes(signal);
+      const { items } = await listResumes(signal);
       setResumes(items);
-      setListUrlUsed(used || "");
     } catch (err) {
       if (isCanceled(err) || signal?.aborted) return;
       console.error("Fetch resumes error:", err?.response?.data || err);
@@ -315,6 +333,13 @@ export default function MyResumesPage() {
     try {
       await api.delete(RESUME_DELETE_URL(id));
       setResumes((prev) => prev.filter((r) => r.id !== id));
+      // also unpin if pinned
+      setPinned((prev) => {
+        const n = new Set(prev);
+        n.delete(normalizeId(id));
+        savePins(n);
+        return n;
+      });
       if (previewItem?.id === id) closePreview();
     } catch (err) {
       if (isCanceled(err)) return;
@@ -347,7 +372,21 @@ export default function MyResumesPage() {
     URL.revokeObjectURL(link.href);
   };
 
-  // ------- filter + sort -------
+  /* ------- favorites toggle ------- */
+  const togglePin = (id) => {
+    const key = normalizeId(id);
+    setPinned((prev) => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      savePins(n);
+      return n;
+    });
+  };
+
+  const isPinned = (id) => pinned.has(normalizeId(id));
+
+  // ------- filter + sort (with pins first) -------
   const filteredSorted = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = resumes;
@@ -363,23 +402,34 @@ export default function MyResumesPage() {
       return hay.includes(q);
     });
 
-    switch (sortBy) {
-      case "oldest":
-        list = list.slice().sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
-        break;
-      case "title-asc":
-        list = list.slice().sort((a, b) => (a.title || "").localeCompare(b.title || ""));
-        break;
-      case "title-desc":
-        list = list.slice().sort((a, b) => (b.title || "").localeCompare(a.title || ""));
-        break;
-      case "newest":
-      default:
-        list = list.slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-        break;
-    }
-    return list;
-  }, [resumes, query, sortBy, tagFilter, docFilter]);
+    // primary: pins first
+    const byPin = (a, b) => {
+      const pa = isPinned(a.id) ? 1 : 0;
+      const pb = isPinned(b.id) ? 1 : 0;
+      return pb - pa; // pinned first
+    };
+
+    // secondary: user's chosen sort
+    const byChoice = (a, b) => {
+      switch (sortBy) {
+        case "oldest":
+          return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+        case "title-asc":
+          return (a.title || "").localeCompare(b.title || "");
+        case "title-desc":
+          return (b.title || "").localeCompare(a.title || "");
+        case "newest":
+        default:
+          return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+      }
+    };
+
+    return list.slice().sort((a, b) => {
+      const pinOrder = byPin(a, b);
+      if (pinOrder !== 0) return pinOrder;
+      return byChoice(a, b);
+    });
+  }, [resumes, query, sortBy, tagFilter, docFilter, pinned]);
 
   return (
     <div style={styles.page}>
@@ -399,7 +449,6 @@ export default function MyResumesPage() {
               onChange={(e) => setDocFilter(e.target.value)}
               style={styles.select}
               aria-label="Filter by document type"
-              title="Show resumes only by default"
             >
               <option value="resumes">Resumes</option>
               <option value="covers">Cover Letters</option>
@@ -428,22 +477,6 @@ export default function MyResumesPage() {
           </div>
         </div>
 
-        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
-          <strong>GET:</strong> {listUrlUsed || "(auto-detecting endpoint)"}{" "}
-          <button
-            onClick={() => setShowDebug((s) => !s)}
-            style={{ marginLeft: 8, border: "1px solid #ddd", borderRadius: 6, padding: "2px 6px", cursor: "pointer", background: "#fff" }}
-          >
-            {showDebug ? "Hide debug" : "Show debug"}
-          </button>
-        </div>
-
-        {showDebug && (
-          <pre style={{ background: "#f8fafc", padding: 10, borderRadius: 8, maxHeight: 220, overflow: "auto" }}>
-            {JSON.stringify(resumes, null, 2)}
-          </pre>
-        )}
-
         {loading && <p style={{ color: "#666" }}>⏳ Loading your resumes…</p>}
 
         {!!errMsg && (
@@ -459,19 +492,33 @@ export default function MyResumesPage() {
 
         <ul style={styles.list}>
           {filteredSorted.map((r) => {
-            const isRenaming = renamingId === r.id;
+            const isRenamingRow = renamingId === r.id;
+            const pinnedNow = isPinned(r.id);
             return (
               <li key={r.id} style={styles.item}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  {/* ⭐ Pin button */}
+                  <button
+                    type="button"
+                    onClick={() => togglePin(r.id)}
+                    title={pinnedNow ? "Unpin" : "Pin to top"}
+                    aria-label="Toggle favorite"
+                    style={{ ...styles.pinBtn, ...(pinnedNow ? styles.pinActive : null) }}
+                  >
+                    {pinnedNow ? "⭐" : "☆"}
+                  </button>
+
                   <span style={styles.tag(r.source || "other")}>
                     {(r.source || "other").toUpperCase()}
                   </span>
+
                   {docFilter === "all" && (
                     <span style={styles.docBadge(getDocType(r))}>
                       {getDocType(r) === "resume" ? "RESUME" : "COVER"}
                     </span>
                   )}
-                  {isRenaming ? (
+
+                  {isRenamingRow ? (
                     <>
                       <input
                         value={renameValue}
@@ -490,7 +537,7 @@ export default function MyResumesPage() {
                   )}
                 </div>
 
-                {/* compact actions */}
+                {/* actions */}
                 <div style={styles.actions}>
                   <button
                     style={{ ...styles.btnBase, ...styles.viewBtn }}
@@ -517,8 +564,7 @@ export default function MyResumesPage() {
                     buttonStyle={styles.moreBtn}
                     align="right"
                   >
-                    {/* Rename always visible: shows Rename OR Save/Cancel depending on state */}
-                    {!isRenaming ? (
+                    {!isRenamingRow ? (
                       <MenuItem onClick={() => startRename(r)}>✏️ Rename</MenuItem>
                     ) : (
                       <>
@@ -555,12 +601,8 @@ export default function MyResumesPage() {
                 <pre style={styles.pre}>{previewItem?.content || "No content."}</pre>
               )}
             </div>
+            {/* Footer: only Close (download dropdown removed) */}
             <div style={styles.modalFooter}>
-              <Dropdown label="📥 Download ▼" buttonStyle={styles.downloadBtn}>
-                <MenuItem onClick={() => downloadTxt(previewItem.title, previewItem.content)}>📝 TXT</MenuItem>
-                <MenuItem onClick={() => downloadDOCX(previewItem.title, previewItem.content)}>📃 DOCX</MenuItem>
-                <MenuItem onClick={() => downloadPDF(previewItem.title, previewItem.content)}>🧾 PDF</MenuItem>
-              </Dropdown>
               <button style={styles.secondary} onClick={closePreview}>Close</button>
             </div>
           </div>
@@ -570,6 +612,7 @@ export default function MyResumesPage() {
   );
 }
 
+/* ---------------- Styles ---------------- */
 const styles = {
   // layout
   page: { fontFamily: "Segoe UI, sans-serif", backgroundColor: "#fdf6ec", minHeight: "100vh", padding: "40px", display: "flex", justifyContent: "center" },
@@ -587,6 +630,22 @@ const styles = {
   errorBox: { background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "10px 12px", borderRadius: 8, margin: "8px 0 16px" },
   list: { listStyle: "none", padding: 0, margin: 0 },
   item: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid #eee", gap: 12 },
+
+  // ⭐ pin button
+  pinBtn: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 8,
+    padding: "4px 7px",
+    cursor: "pointer",
+    fontSize: 16,
+    lineHeight: 1,
+  },
+  pinActive: {
+    background: "#fff7cc",
+    borderColor: "#fde68a",
+  },
+
   tag: (src) => ({
     fontSize: 11, padding: "2px 8px", borderRadius: 999,
     background: src === "enhancer" ? "#def7ec" : src === "upload" ? "#e0e7ff" : "#fef3c7",

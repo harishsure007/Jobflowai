@@ -16,33 +16,25 @@ const SignupPage = () => {
     setError("");
 
     const cleanEmail = (email || "").trim();
-
     if (!cleanEmail) return setError("Email is required");
     if (password.length < 6) return setError("Password must be at least 6 characters");
     if (password !== confirmPassword) return setError("Passwords do not match");
 
     setLoading(true);
     try {
-      // 1) Attempt signup
       const { data } = await api.post("/api/v1/auth/signup", {
         email: cleanEmail,
         password,
       });
 
-      // Some backends return token on signup; some don't.
       const accessToken = data?.access_token || data?.token || "";
       const rawType = (data?.token_type || "Bearer").trim();
       const tokenType = rawType.toLowerCase() === "bearer" ? "Bearer" : rawType;
 
       if (accessToken) {
-        // 2a) Token returned on signup → set header + persist (handled in api.js)
         setAuthToken(accessToken, tokenType);
       } else {
-        // 2b) No token returned → auto-login once using same creds
-        const loginRes = await api.post("/api/v1/auth/login", {
-          email: cleanEmail,
-          password,
-        });
+        const loginRes = await api.post("/api/v1/auth/login", { email: cleanEmail, password });
         const loginToken = loginRes?.data?.access_token || loginRes?.data?.token || "";
         const loginTypeRaw = (loginRes?.data?.token_type || "Bearer").trim();
         const loginType = loginTypeRaw.toLowerCase() === "bearer" ? "Bearer" : loginTypeRaw;
@@ -50,9 +42,7 @@ const SignupPage = () => {
         setAuthToken(loginToken, loginType);
       }
 
-      // Optional sanity check
       await api.get("/api/v1/auth/me");
-
       navigate("/dashboard");
     } catch (err) {
       const detail =
@@ -69,6 +59,16 @@ const SignupPage = () => {
   return (
     <div style={styles.page}>
       <style>{`
+        /* Hard reset so nothing adds side gaps */
+        * { box-sizing: border-box; }
+        html, body, #root {
+          height: 100%;
+          width: 100%;
+          margin: 0;
+          padding: 0;
+        }
+        body { overflow-x: hidden; }
+
         @keyframes gradientBG {
           0% { background-position: 0% 50%; }
           50% { background-position: 100% 50%; }
@@ -76,81 +76,97 @@ const SignupPage = () => {
         }
       `}</style>
 
-      <div style={styles.card} role="main" aria-label="Signup form">
-        <h2 style={styles.title}>📝 Create your account</h2>
+      <div style={styles.center}>
+        <div style={styles.card} role="main" aria-label="Signup form">
+          <h2 style={styles.title}>📝 Create your account</h2>
 
-        {error && (
-          <p role="alert" style={styles.error}>
-            {error}
-          </p>
-        )}
+          {error && (
+            <p role="alert" style={styles.error}>
+              {error}
+            </p>
+          )}
 
-        <form onSubmit={handleSignup} style={styles.form} noValidate>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            aria-label="Email"
-            autoComplete="email"
-            style={styles.input}
-            disabled={loading}
-          />
-          <input
-            type="password"
-            placeholder="Password (min 6 chars)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            aria-label="Password"
-            autoComplete="new-password"
-            style={styles.input}
-            disabled={loading}
-          />
-          <input
-            type="password"
-            placeholder="Confirm Password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-            aria-label="Confirm Password"
-            autoComplete="new-password"
-            style={styles.input}
-            disabled={loading}
-          />
+          <form onSubmit={handleSignup} style={styles.form} noValidate>
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              aria-label="Email"
+              autoComplete="email"
+              style={styles.input}
+              disabled={loading}
+            />
+            <input
+              type="password"
+              placeholder="Password (min 6 chars)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              aria-label="Password"
+              autoComplete="new-password"
+              style={styles.input}
+              disabled={loading}
+            />
+            <input
+              type="password"
+              placeholder="Confirm Password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              aria-label="Confirm Password"
+              autoComplete="new-password"
+              style={styles.input}
+              disabled={loading}
+            />
 
-          <button type="submit" style={styles.button} disabled={loading}>
-            {loading ? "Creating..." : "Sign Up"}
-          </button>
+            <button type="submit" style={styles.button} disabled={loading}>
+              {loading ? "Creating..." : "Sign Up"}
+            </button>
 
-          <p style={{ fontSize: "0.9rem", marginTop: 12 }}>
-            Already have an account? <Link to="/login">Sign in</Link>
-          </p>
-        </form>
+            <p style={{ fontSize: "0.9rem", marginTop: 12 }}>
+              Already have an account? <Link to="/login">Sign in</Link>
+            </p>
+          </form>
+        </div>
       </div>
     </div>
   );
 };
 
 const styles = {
+  // Full-bleed, fixed to viewport so no left gap can appear
   page: {
-    minHeight: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    background: "linear-gradient(-45deg, #f2f4f8, #e3f2fd, #dbe9f4, #ffffff)",
+    position: "fixed",   // ✅ pin to viewport
+    inset: 0,            // ✅ top:0 right:0 bottom:0 left:0
+    overflowX: "hidden",
+    overflowY: "auto",
+    background:
+      "linear-gradient(-45deg, #f9fafb, #eff6ff, #dbeafe, #bfdbfe, #a5b4fc)",
     backgroundSize: "400% 400%",
+    backgroundRepeat: "no-repeat",
     animation: "gradientBG 20s ease infinite",
     fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
   },
+
+  // Separate centering layer (so page can stay fixed/bleeding)
+  center: {
+    minHeight: "100%",
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+
   card: {
     backgroundColor: "#fff",
     padding: "40px",
     borderRadius: "12px",
     boxShadow: "0 4px 30px rgba(0,0,0,0.05)",
     width: "100%",
-    maxWidth: "400px",
+    maxWidth: "420px",
     textAlign: "center",
   },
   title: { marginBottom: "24px", color: "#1f3b4d" },
@@ -161,6 +177,7 @@ const styles = {
     border: "1px solid #ccc",
     fontSize: "1rem",
   },
+  // Old solid navy button color
   button: {
     backgroundColor: "#1f3b4d",
     color: "#fff",
@@ -169,6 +186,7 @@ const styles = {
     border: "none",
     fontSize: "1rem",
     cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(31,59,77,0.25)",
   },
   error: {
     backgroundColor: "#ffe8e8",

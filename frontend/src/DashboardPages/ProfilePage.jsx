@@ -259,40 +259,54 @@ export default function ProfilePage() {
 
   const initials = useMemo(() => deriveInitials(form?.full_name ?? ""), [form.full_name]);
 
-  if (loading) return <div style={sx.page}>Loading profile…</div>;
+  if (loading) {
+    return (
+      <div style={sx.page}>
+        <style>{styles}</style>
+        <div className="skeleton">
+          <div className="skeleton-banner" />
+          <div className="skeleton-card" />
+          <div className="skeleton-card" />
+          <div className="skeleton-card" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={sx.page}>
       <style>{styles}</style>
 
-      <header className="pf-header">
-        <div className="pf-header-left">
-          <div className="pf-avatar" title={form.full_name || "Your name"}>
+      {/* Clean, minimal header (accent line) */}
+      <div className="hero">
+        <div className="hero-inner">
+          <div className="pf-avatar pf-avatar-xl" title={form.full_name || "Your name"}>
             {initials || "👤"}
           </div>
-        <div>
+          <div className="hero-text">
             <h1 className="pf-title">My Profile</h1>
-            <div className="pf-sub">Edit your details used to auto-generate resumes.</div>
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-              <div><strong>Read from:</strong> {API_BASE}{READ_ENDPOINT}</div>
-              <div><strong>Last write to:</strong> {writeEndpoint || "—"}</div>
+            <div className="pf-sub">
+              Keep your details tidy — we use this info to auto-fill resumes & cover letters.
+            </div>
+            <div className="pf-meta">
+              <span><strong>Last write to:</strong> {writeEndpoint || "—"}</span>
             </div>
           </div>
+          <div className="hero-actions">
+            <button className="btn ghost" onClick={() => navigate(-1)}>Cancel</button>
+            <button className="btn primary" onClick={saveProfile} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
-        <div className="pf-actions">
-          <button className="btn ghost" onClick={() => navigate(-1)}>Cancel</button>
-          <button className="btn" onClick={saveProfile} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </header>
+      </div>
 
-      {err && (<div className="pf-error"><strong>Error:</strong> <span>{err}</span></div>)}
-      {ok && (<div className="pf-ok"><strong>{ok}</strong></div>)}
+      {err && (<div className="pf-banner error"><strong>Error:</strong> <span>{err}</span></div>)}
+      {ok && (<div className="pf-banner ok"><strong>{ok}</strong></div>)}
 
       {/* Contact */}
       <section className="pf-card">
-        <h2>Contact & Links</h2>
+        <h2>👤 Contact & Links</h2>
         <div className="grid2">
           <Input label="Full name" value={form.full_name} onChange={(v) => setForm((f) => ({ ...f, full_name: v }))} required />
           <Input label="Email" type="email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} required />
@@ -306,7 +320,7 @@ export default function ProfilePage() {
 
       {/* Summary */}
       <section className="pf-card">
-        <h2>Professional Summary</h2>
+        <h2>📝 Professional Summary</h2>
         <Textarea
           value={form.summary}
           onChange={(v) => setForm((f) => ({ ...f, summary: v }))}
@@ -317,7 +331,7 @@ export default function ProfilePage() {
 
       {/* Skills */}
       <section className="pf-card">
-        <h2>Skills <span className="hint">(press Enter to add)</span></h2>
+        <h2>💡 Skills <span className="hint">(press Enter to add)</span></h2>
         <Chips
           value={form.skills}
           onChange={(arr) => setForm((f) => ({ ...f, skills: arr }))}
@@ -327,7 +341,7 @@ export default function ProfilePage() {
 
       {/* Experience */}
       <section className="pf-card">
-        <h2>Experience</h2>
+        <h2>💼 Experience</h2>
         <List
           items={form.experience}
           onChange={(arr) => setForm((f) => ({ ...f, experience: arr }))}
@@ -354,7 +368,7 @@ export default function ProfilePage() {
 
       {/* Projects */}
       <section className="pf-card">
-        <h2>Projects</h2>
+        <h2>🚀 Projects</h2>
         <List
           items={form.projects}
           onChange={(arr) => setForm((f) => ({ ...f, projects: arr }))}
@@ -383,7 +397,7 @@ export default function ProfilePage() {
 
       {/* Education */}
       <section className="pf-card">
-        <h2>Education</h2>
+        <h2>🎓 Education</h2>
         <List
           items={form.education}
           onChange={(arr) => setForm((f) => ({ ...f, education: arr }))}
@@ -408,7 +422,7 @@ export default function ProfilePage() {
 
       {/* Certifications */}
       <section className="pf-card">
-        <h2>Certifications</h2>
+        <h2>🏅 Certifications</h2>
         <List
           items={form.certifications}
           onChange={(arr) => setForm((f) => ({ ...f, certifications: arr }))}
@@ -425,17 +439,17 @@ export default function ProfilePage() {
           makeNew={() => ({ name: "", year: "", org: "" })}
         />
       </section>
-
-      {/* (No Extras section; no bottom footer) */}
     </div>
   );
 }
 
 /* ---------- tiny UI primitives ---------- */
-function Input({ label, className, onChange, ...props }) {
+function Input({ label, className, onChange, required, ...props }) {
   return (
     <label className={`pf-label ${className || ""}`}>
-      <span>{label}</span>
+      <span>
+        {label} {required && <em className="req">*</em>}
+      </span>
       <input
         className="pf-input"
         {...props}
@@ -495,6 +509,7 @@ function Chips({ label, value, onChange, placeholder }) {
           }}
           placeholder={placeholder || "Type and press Enter"}
         />
+        <button className="btn pill ghost" onClick={addChip}>Add</button>
       </div>
     </div>
   );
@@ -506,7 +521,6 @@ function Bullets({ label, value, onChange }) {
   const [text, setText] = useState("");
 
   function add() {
-    // Only trim ends; keep inner spaces exactly as typed
     const t = (text ?? "").replace(/\r?\n/g, " ").trim();
     if (!t) return;
     onChange && onChange([...(items || []), t]);
@@ -577,61 +591,137 @@ function List({ items, onChange, renderItem, makeNew }) {
 
 /* ---------- styles ---------- */
 const sx = {
-  page: { maxWidth: 1000, margin: "0 auto", padding: 20 },
+  page: { maxWidth: 1080, margin: "0 auto", padding: "12px 18px 32px" },
 };
 
 const styles = `
-  .pf-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin: 8px 0 16px; }
-  .pf-header-left { display:flex; align-items:center; gap:12px; }
-  .pf-avatar { width:44px; height:44px; border-radius:50%; background:#1f3b4d; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; }
-  .pf-title { margin:0; font-size:20px; }
-  .pf-sub { font-size:12px; color:#666; }
-  .pf-actions { display:flex; gap:8px; }
+  :root {
+    --bg: #f7f9fc;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #6b7280;
+    --line: #e6eaf2;
+    --brand: #2563eb;
+    --brand2: #0ea5e9;
+    --brand-dark: #1f3b4d;
+    --accent: #98c6ff;
+    --ok-bg: #ecfdf5;
+    --ok-text: #065f46;
+    --ok-line: #a7f3d0;
+    --err-bg: #fee2e2;
+    --err-text: #b91c1c;
+    --err-line: #fecaca;
+    --ring: rgba(59,130,246,.35);
+    --chip-bg: #e8f1ff;
+    --chip-text: #1e40af;
+    --shadow: 0 8px 18px rgba(2, 6, 23, 0.06);
+  }
 
-  :root, *, *::before, *::after { box-sizing: border-box; }
-  body { line-height: 1.35; }
-  .pf-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin:12px 0; }
+  html, body { background: var(--bg); color: var(--text); }
+  *, *::before, *::after { box-sizing: border-box; }
 
+  /* Clean, minimal Hero (no big color bar) */
+  .hero {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    margin: 10px 0 18px;
+    border: 1px solid var(--line);
+    background: #fff;
+    box-shadow: 0 8px 18px rgba(2,6,23,.06);
+    padding: 14px 18px;
+  }
+  /* Thin accent line on top */
+  .hero::before{
+    content:"";
+    position:absolute; left:0; right:0; top:0;
+    height:4px;
+    border-top-left-radius:14px; border-top-right-radius:14px;
+    background: linear-gradient(90deg, var(--brand), var(--brand2));
+  }
+  /* Remove old big banner if any */
+  .hero-bg { display:none; }
+
+  .hero-inner { display:grid; grid-template-columns: auto 1fr auto; gap:16px; align-items:center; }
+  .pf-avatar { width:44px; height:44px; border-radius:50%; background:var(--brand-dark); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .pf-avatar.pf-avatar-xl { width:64px; height:64px; font-size:20px; }
+  .pf-title { margin:0; font-size:22px; letter-spacing:.2px; }
+  .pf-sub { font-size:13px; color:var(--muted); margin-top:4px; }
+  .pf-meta { font-size:12px; color:var(--muted); margin-top:6px; }
+
+  .hero-actions { display:flex; gap:10px; }
+  .btn { background:var(--brand-dark); color:#fff; border:none; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:700; box-shadow: var(--shadow); transition: transform .06s ease, box-shadow .2s ease, background .2s ease; }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 20px rgba(2,6,23,.09); }
+  .btn:disabled { opacity:.6; cursor:default; transform:none; }
+  .btn.ghost { background:#fff; color:var(--brand-dark); border:1px solid #dbe4ef; }
+  .btn.primary { background: linear-gradient(135deg, var(--brand), var(--brand2)); }
+  .btn.pill { border-radius:999px; padding:8px 12px; font-weight:600; }
+  .btn.danger { color:#d22; border-color:#d22; }
+  .btn.danger.ghost { color:#d22; border:1px solid #d22; background:#fff; }
+
+  .pf-banner { border-radius:12px; padding:10px 12px; margin: 10px 0 6px; border:1px solid; }
+  .pf-banner.ok { background:var(--ok-bg); color:var(--ok-text); border-color:var(--ok-line); }
+  .pf-banner.error { background:var(--err-bg); color:var(--err-text); border-color:var(--err-line); }
+
+  /* Cards */
+  .pf-card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin:14px 0; box-shadow: var(--shadow); }
+  .pf-card > h2 { margin:0 0 12px; font-size:16px; letter-spacing:.2px; display:flex; align-items:center; gap:8px; }
+  .hint { color:var(--muted); font-size:12px; font-weight:500; }
+
+  /* Layout helpers */
   .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
   .span2 { grid-column: 1 / -1; }
   .grid2 > * { min-width: 0; }
+  .row-right { display:flex; justify-content:flex-end; }
 
-  .pf-label { display:flex; flex-direction:column; gap:4px; min-width:0; }
-  .pf-label > span { font-size:12px; color:#555; }
-  .pf-input, .pf-textarea { width:100%; border:1px solid #d1d5db; border-radius:8px; padding:10px; font-size:14px; }
-  .pf-textarea { min-height: 100px; }
+  /* Form */
+  .pf-label { display:flex; flex-direction:column; gap:6px; min-width:0; font-weight:600; }
+  .pf-label > span { font-size:12px; color:#334155; }
+  .req { color:#ef4444; font-style: normal; margin-left: 4px; }
+  .pf-input, .pf-textarea {
+    width:100%;
+    border:1px solid #d6deea;
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:14px;
+    background:#ffffff;
+    outline: none;
+    transition: box-shadow .15s ease, border-color .15s ease, background .2s ease;
+  }
+  .pf-textarea { min-height: 110px; }
+  .pf-input:focus, .pf-textarea:focus {
+    border-color:#bfd6ff;
+    box-shadow: 0 0 0 4px var(--ring);
+    background: #fff;
+  }
 
-  .chips { display:flex; flex-direction:column; gap:6px; min-width:0; }
-  .chips-label { font-size:12px; color:#555; }
+  /* Chips */
+  .chips { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .chips-label { font-size:12px; color:#334155; font-weight:600; }
   .chips-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .chips-input { border:1px solid #d1d5db; border-radius:999px; padding:8px 12px; flex:1 1 160px; min-width:0; }
+  .chips-input { border:1px solid #d6deea; border-radius:999px; padding:8px 12px; flex:1 1 160px; min-width:0; }
+  .chip { background:var(--chip-bg); color:var(--chip-text); padding:6px 10px; border-radius:999px; cursor:pointer; user-select:none; border:1px solid #cfe0ff; transition: transform .06s; }
+  .chip:hover { transform: translateY(-1px); }
 
-  .chip { background:#e0ecf4; color:#1f3b4d; padding:6px 10px; border-radius:999px; cursor:pointer; user-select:none; }
-
-  /* Bullets block spacing so it doesn't touch neighbors */
+  /* Bullets */
   .bullets { display:flex; flex-direction:column; gap:10px; }
   .bullets-list { display:flex; flex-direction:column; gap:6px; margin-top: 2px; }
-  .bullet-item { display:flex; align-items:center; justify-content:space-between; gap:8px; background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:8px 10px; }
+  .bullet-item { display:flex; align-items:center; justify-content:space-between; gap:8px; background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:8px 10px; }
   .bullets-add { display:flex; gap:8px; align-items:center; margin-top: 6px; }
   .bullets-add .pf-input { flex: 1 1 auto; }
 
+  /* List */
   .list { display:flex; flex-direction:column; gap:12px; }
-  .list-item { background:#fbfbfb; border:1px solid #f0f2f5; border-radius:10px; padding:12px; }
+  .list-item { background:#fbfbff; border:1px solid #edf0f7; border-radius:12px; padding:12px; }
 
-  .row-right { display:flex; justify-content:flex-end; }
-
-  .btn { background:#1f3b4d; color:#fff; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600; }
-  .btn:disabled { opacity:.6; cursor:default; }
-  .btn.ghost { background:transparent; color:#1f3b4d; border:1px solid #1f3b4d; }
-  .btn.danger { color:#d22; border-color:#d22; }
-  .btn.danger.ghost { color:#d22; border:1px solid #d22; }
-  .link { background:none; border:none; color:#1f3b4d; cursor:pointer; padding:4px 6px; }
-  .link.danger { color:#d22; }
-
-  .pf-error { background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; padding:10px 12px; border-radius:8px; margin: 8px 0; }
-  .pf-ok { background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; padding:10px 12px; border-radius:8px; margin: 8px 0; }
+  /* Skeleton (loading) */
+  .skeleton-banner { height:140px; background: linear-gradient(90deg, #eef2f7 25%, #f6f8fb 37%, #eef2f7 63%); background-size: 400% 100%; animation: shimmer 1.2s infinite; border-radius:18px; margin-bottom:16px; }
+  .skeleton-card { height:120px; background: linear-gradient(90deg, #eef2f7 25%, #f6f8fb 37%, #eef2f7 63%); background-size: 400% 100%; animation: shimmer 1.2s infinite; border-radius:16px; margin:12px 0; border:1px solid var(--line); }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   @media (max-width: 980px) {
+    .hero-inner { grid-template-columns: auto 1fr; grid-template-areas: "avatar text" "actions actions"; gap: 12px; }
+    .hero-actions { grid-area: actions; justify-content: flex-end; }
     .grid2 { grid-template-columns: 1fr; }
     .span2 { grid-column: 1 / -1; }
   }
