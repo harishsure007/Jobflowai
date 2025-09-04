@@ -175,7 +175,7 @@ const WelcomePage = () => {
             delay={0}
             bg="#eef7ff"
             border="1px solid #dbeeff"
-            emoji="🧠"
+            emoji="✨"
             title="AI Resume Builder"
             subtitle="Build resumes that demand attention"
             text="Transform your experience into a powerful, ATS-ready resume. Our AI enhances every detail—from structure and style to keyword precision—so you stand out to recruiters and hiring managers from the very first glance."

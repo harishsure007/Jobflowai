@@ -197,7 +197,7 @@ export default function JobPostingsPage() {
           </select>
 
           <button
-            className="btn"
+            className="btn subtle-btn"
             onClick={() => {
               setEmploymentType("any");
               setPostedWithin("any");
@@ -205,7 +205,7 @@ export default function JobPostingsPage() {
               setExpLevel("any");
             }}
           >
-            Reset filters
+            Reset
           </button>
         </div>
 
@@ -242,7 +242,7 @@ export default function JobPostingsPage() {
           </div>
 
           <div className="pager">
-            <button className="btn" onClick={handlePrev} disabled={loading || page === 1}>
+            <button className="btn nav" onClick={handlePrev} disabled={loading || page === 1}>
               ◀ Prev
             </button>
             <span className="page-ind">
@@ -251,7 +251,7 @@ export default function JobPostingsPage() {
                 ? ` • Showing ${filteredJobs.length} of ${total}`
                 : ""}
             </span>
-            <button className="btn" onClick={handleNext} disabled={loading}>
+            <button className="btn nav" onClick={handleNext} disabled={loading}>
               Next ▶
             </button>
           </div>
@@ -289,37 +289,31 @@ function JobCard({ job }) {
           <h3 className="job-title">{title || "Untitled role"}</h3>
           <div className="meta">
             {company && <span className="chip">{company}</span>}
-            {location && <span className="dot">•</span>}
             {location && <span className="chip soft">{location}</span>}
-            {employment_type && (
-              <>
-                <span className="dot">•</span>
-                <span className="chip soft">{employment_type}</span>
-              </>
-            )}
+            {employment_type && <span className="chip soft">{employment_type}</span>}
           </div>
         </div>
 
         <div className="right-top">
           {salary && <div className="salary">{salary}</div>}
-          {posted_at && <div className="posted">Posted: {formatDate(posted_at)}</div>}
+          {posted_at && <div className="posted">📅 {formatDate(posted_at)}</div>}
         </div>
       </div>
 
       {description && (
         <p className="desc">
-          {description.slice(0, 320)}
-          {description.length > 320 ? "…" : ""}
+          {description.slice(0, 240)}
+          {description.length > 240 ? "…" : ""}
         </p>
       )}
 
       <div className="card-foot">
         <div className="source">
-          Source: <span className="badge">{source || "Unknown"}</span>
+          🔗 Source: <span className="badge">{source || "Unknown"}</span>
         </div>
         {url && (
-          <a className="btn primary" href={url} target="_blank" rel="noopener noreferrer">
-            View / Apply →
+          <a className="btn apply" href={url} target="_blank" rel="noopener noreferrer">
+            Apply Now →
           </a>
         )}
       </div>
@@ -341,105 +335,87 @@ function formatDate(v) {
   return String(v);
 }
 
+/* ---------------- UI CSS ---------------- */
 const css = `
-.jobs-wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
-.header { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(6px);
-  background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.85));
-  padding-bottom: 14px; margin-bottom: 10px; border-bottom: 1px solid #eef0f3;
+.jobs-wrap { max-width: 1000px; margin: 0 auto; padding: 28px; font-family: Inter, sans-serif; }
+.header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px);
+  background: linear-gradient(135deg, #f9fafb, #eef2ff); padding: 18px 0 16px; margin-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb; box-shadow: 0 2px 6px rgba(0,0,0,0.04);
 }
-.title { margin: 0 0 12px; font-size: 24px; font-weight: 800; }
-.muted { font-weight: 600; color: #697386; font-size: 16px; }
+.title { margin: 0 0 14px; font-size: 26px; font-weight: 800; color: #1e293b; }
+.muted { font-weight: 600; color: #64748b; font-size: 16px; }
 
-/* rows */
+/* Filters */
 .filters { display: grid; gap: 10px; align-items: center; }
-.filters.top { grid-template-columns: 1.5fr 1.2fr auto auto; }
-.filters.bottom { grid-template-columns: 1fr 1fr 1fr 1fr auto; margin-top: 10px; }
+.filters.top { grid-template-columns: 1.5fr 1.2fr auto auto; background:#fff; padding:12px 16px;
+  border-radius:14px; box-shadow:0 2px 6px rgba(0,0,0,0.06); margin-bottom:12px; }
+.filters.bottom { grid-template-columns: repeat(5,1fr); margin-top: 8px; gap: 12px; }
 
-/* Inputs/Selects with background color like source chips */
 .input, .select {
-  width: 100%;
-  height: 42px;
-  padding: 10px 12px;
-  font-size: 14px;
-  line-height: 20px;
-  border: 1px solid #dfe3e6;
-  border-radius: 10px;
-  background: #eef2ff;   /* 👈 light chip-style background */
-  outline: none;
+  width: 100%; height: 42px; padding: 10px 12px;
+  font-size: 14px; border: 1px solid #d1d5db; border-radius: 12px;
+  background: #f9fafb; transition:border-color .2s, box-shadow .2s;
 }
-.input::placeholder { color: #6b7280; }
+.input:focus, .select:focus { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.2); }
+.input::placeholder { color:#9ca3af; }
 .select { appearance: none; }
+.checkbox { display:flex; align-items:center; gap:6px; font-size:14px; }
 
-/* === BUTTONS (Sky Blue palette, old outline style) === */
-/* === BUTTONS (Blue-400 / Blue-500) === */
-.btn {
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid #60a5fa;   /* Blue-400 */
-  background: #2563eb;         /* default */
-  color: #fff;
-  cursor: pointer;
-  font-weight: 600;
-  transition: background .2s, transform .02s, border-color .2s;
-  height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* Buttons */
+.btn { padding: 10px 16px; border-radius: 12px; border:1px solid transparent;
+  cursor:pointer; font-weight:600; transition:all .2s; height:42px; display:inline-flex; align-items:center; justify-content:center;
 }
-.btn:hover { background: #3b82f6; border-color: #3b82f6; } /* Blue-500 */
-.btn:active { transform: translateY(1px); }
+.btn.primary { background:#2563eb; color:#fff; }
+.btn.primary:hover { background:#1d4ed8; }
+.btn.subtle-btn { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+.btn.subtle-btn:hover { background:#e5e7eb; }
+.btn.nav { background:#fff; border:1px solid #d1d5db; color:#111827; }
+.btn.nav:hover { background:#f3f4f6; }
+.btn.apply { background:#16a34a; border:1px solid #16a34a; color:#fff; }
+.btn.apply:hover { background:#15803d; }
 
-.btn.primary {
-  background: #2563eb;   /* Blue-500 for primary */
-  border-color: #3b82f6;
-  color: #fff;
+/* Card */
+.list { display:grid; gap:18px; margin-top:18px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:18px; padding:20px;
+  box-shadow:0 2px 10px rgba(0,0,0,0.04); transition:transform .15s, box-shadow .15s;
 }
-.btn.primary:hover { background: #2563eb; border-color: #2563eb; } /* Blue-600 on hover */
+.card:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,0.08); }
+.card-head { display:flex; justify-content:space-between; gap:16px; }
+.job-title { margin:0 0 6px; font-size:19px; font-weight:800; color:#111827; }
+.meta { display:flex; flex-wrap:wrap; gap:8px; }
+.chip { padding:4px 10px; border-radius:999px; background:#eef2ff; font-weight:600; font-size:12px; color:#1e293b; }
+.chip.soft { background:#f3f4f6; color:#374151; }
 
+.right-top { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+.salary { font-weight:700; color:#0f766e; background:#ecfdf5; padding:3px 8px; border-radius:8px; font-size:13px; }
+.posted { font-size:12px; color:#6b7280; }
 
-.subtle { margin-top: 8px; color: #6b7280; font-size: 13px; }
+.desc { margin:12px 0 10px; color:#374151; line-height:1.5; font-size:14px; }
 
-.alert { margin-top: 14px; padding: 10px 12px; background: #fff4f4; border: 1px solid #ffd9d9; color: #b42318; border-radius: 10px; }
+.card-foot { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+.source { font-size:12px; color:#6b7280; }
+.badge { padding:3px 8px; border-radius:999px; background:#e0f2fe; color:#075985; font-weight:700; font-size:12px; }
 
-.list { display: grid; gap: 14px; margin-top: 14px; }
-.card {
-  background: #fff; border: 1px solid #e6e9ee; border-radius: 16px; padding: 18px 18px 14px;
-  box-shadow: 0 2px 8px rgba(16,24,40,0.04);
-}
-.card:hover { box-shadow: 0 6px 20px rgba(16,24,40,0.08); }
-.card-head { display: flex; justify-content: space-between; gap: 16px; }
-.job-title { margin: 0 0 6px; font-size: 18px; font-weight: 800; color: #111827; }
-.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #4b5563; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: #eef2ff; color: #1f2937; font-weight: 600; font-size: 12px; }
-.chip.soft { background: #f3f4f6; color: #374151; }
-.dot { color: #9ca3af; }
+/* Pager */
+.pager { display:flex; justify-content:center; align-items:center; gap:12px; margin:20px 0; }
+.page-ind { color:#374151; font-weight:600; }
 
-.right-top { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; white-space: nowrap; }
-.salary { font-weight: 700; color: #0f766e; }
-.posted { font-size: 12px; color: #6b7280; }
-
-.desc { margin: 12px 0 8px; color: #374151; line-height: 1.5; }
-
-.card-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.source { font-size: 12px; color: #6b7280; }
-.badge { padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #1f2937; font-weight: 700; }
-
-.pager { display: flex; justify-content: center; align-items: center; gap: 10px; margin: 18px 0 8px; }
-.page-ind { color: #4b5563; font-weight: 600; }
-
-.empty { text-align: center; padding: 50px 10px; color: #6b7280; }
-.empty-emoji { font-size: 40px; margin-bottom: 8px; }
+/* Empty & Alerts */
+.subtle { margin-top:6px; color:#6b7280; font-size:13px; }
+.alert { margin-top:14px; padding:12px 14px; background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:10px; }
+.empty { text-align:center; padding:50px 10px; color:#6b7280; }
+.empty-emoji { font-size:42px; margin-bottom:8px; }
 
 /* Skeletons */
-.skeleton .s-line { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #f2f4f7, #eaeef3, #f2f4f7);
-  background-size: 200% 100%; animation: shimmer 1.2s infinite; margin-bottom: 10px; }
-.skeleton .w20 { width: 20%; } .skeleton .w30 { width: 30%; } .skeleton .w40 { width: 40%; }
-.skeleton .w80 { width: 80%; } .skeleton .w90 { width: 90%; }
-@keyframes shimmer { 0% { background-position: 0% 0; } 100% { background-position: -200% 0; } }
+.skeleton .s-line { height:12px; border-radius:6px; background:linear-gradient(90deg,#f3f4f6,#e5e7eb,#f3f4f6);
+  background-size:200% 100%; animation:shimmer 1.2s infinite; margin-bottom:10px; }
+.skeleton .w20 { width:20%; } .skeleton .w30 { width:30%; } .skeleton .w40 { width:40%; }
+.skeleton .w80 { width:80%; } .skeleton .w90 { width:90%; }
+@keyframes shimmer { 0% { background-position:0% 0; } 100% { background-position:-200% 0; } }
 
 /* Responsive */
 @media (max-width: 1100px) {
-  .filters.bottom { grid-template-columns: 1fr 1fr 1fr auto; }
+  .filters.bottom { grid-template-columns: 1fr 1fr 1fr auto auto; }
 }
 @media (max-width: 900px) {
   .filters.top { grid-template-columns: 1fr; }

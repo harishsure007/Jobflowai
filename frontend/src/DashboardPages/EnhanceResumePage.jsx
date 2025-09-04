@@ -1,16 +1,14 @@
 // src/DashboardPages/EnhanceResumePage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import api, { API_BASE, setAuthToken } from "../lib/api"; // ✅ shared client
+import api, { API_BASE, setAuthToken } from "../lib/api";
 import { jsPDF } from "jspdf";
 import { saveAs } from "file-saver";
-import { Document, Packer, Paragraph } from "docx";
+import { Document, Packer, Paragraph, HeadingLevel, TextRun } from "docx"; // ⬅️ keep
 
 const ENHANCE_URL = `/api/v1/enhance/`;
-const PARSE_URL = `/api/v1/parse/`;
-const SAVE_RESUME_URL = `/api/v1/resume-cover/save`; // ✅ save via resume-cover
+const SAVE_RESUME_URL = `/api/v1/resume-cover/save`;
 
-/* ---------- helpers ---------- */
 const safeText = (v) =>
   v == null
     ? ""
@@ -20,14 +18,12 @@ const safeText = (v) =>
 
 function normalizeError(errLike) {
   try {
-    // axios timeout uses code ECONNABORTED
     if (errLike?.code === "ECONNABORTED") return "Request timed out. Please try again.";
     const detail =
       errLike?.response?.data?.detail ??
       errLike?.response?.data ??
       errLike?.message ??
       errLike;
-
     if (Array.isArray(detail)) {
       return detail
         .map((d) => {
@@ -49,7 +45,6 @@ function normalizeError(errLike) {
   }
 }
 
-/** Load a TTF font file and return base64 for jsPDF.addFileToVFS */
 async function fetchFontAsBase64(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`Failed to load font: ${path}`);
@@ -93,13 +88,19 @@ const EnhanceResumePage = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // parser UI
-  const [showParsed, setShowParsed] = useState(false);
-  const [parseLoading, setParseLoading] = useState(false);
-  const [parsedInsights, setParsedInsights] = useState(null);
-  const [parseError, setParseError] = useState("");
+  const [rewriteExperience, setRewriteExperience] = useState(true);
+  const [rewriteStrength, setRewriteStrength] = useState(0.7);
 
-  // 🔐 Ensure Authorization header is set on mount
+  // responsive (no global style mutation)
+  const [isNarrow, setIsNarrow] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 1000 : false
+  );
+  useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 1000);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     const t = localStorage.getItem("token") || localStorage.getItem("access_token");
     const type = localStorage.getItem("token_type") || "Bearer";
@@ -110,9 +111,7 @@ const EnhanceResumePage = () => {
     }
   }, []);
 
-  // --- Enhance cancellation support ---
   const enhanceCtrlRef = useRef(null);
-
   useEffect(() => {
     enhanceResume(false);
     return () => {
@@ -123,10 +122,6 @@ const EnhanceResumePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // rewrite controls
-  const [rewriteExperience, setRewriteExperience] = useState(true);
-  const [rewriteStrength, setRewriteStrength] = useState(0.7);
-
   const enhanceResume = async (isRerun = true) => {
     if (!resumeText?.trim()) {
       setError(
@@ -134,8 +129,6 @@ const EnhanceResumePage = () => {
       );
       return;
     }
-
-    // cancel any inflight enhance call
     try {
       enhanceCtrlRef.current?.abort();
     } catch {}
@@ -157,8 +150,8 @@ const EnhanceResumePage = () => {
 
       const { data } = await api.post(ENHANCE_URL, payload, {
         headers: { "Content-Type": "application/json" },
-        timeout: 90000,         // ⬅️ give enhance up to 90s
-        signal: ctrl.signal,    // ⬅️ cancel support
+        timeout: 90000,
+        signal: ctrl.signal,
         validateStatus: () => true,
       });
 
@@ -175,57 +168,14 @@ const EnhanceResumePage = () => {
         data?.text ||
         "";
 
-      if (!text) {
-        setError("No content returned by the enhancement service.");
-      }
+      if (!text) setError("No content returned by the enhancement service.");
       setEnhancedResume(safeText(text));
     } catch (err) {
-      // ignore user-triggered cancellation
       if (err?.name !== "CanceledError" && err?.code !== "ERR_CANCELED") {
         setError(`❌ ${normalizeError(err)}`);
       }
     } finally {
       setLoading(false);
-    }
-  };
-
-  const parseCurrent = async () => {
-    const textToParse =
-      (enhancedResume && String(enhancedResume).trim()) ||
-      (resumeText && String(resumeText).trim());
-    if (!textToParse) {
-      alert("Nothing to parse yet. Enhance or paste resume text first.");
-      return;
-    }
-    setParseLoading(true);
-    setParsedInsights(null);
-    setParseError("");
-
-    try {
-      const form = new FormData();
-      form.append("resume_text", textToParse);
-      form.append("fuzzy_skills", "true");
-
-      const { data } = await api.post(PARSE_URL, form, {
-        // let browser set boundary
-        timeout: 45000,          // ⬅️ allow a bit more time
-        validateStatus: () => true,
-      });
-
-      if (data?.detail) {
-        setParseError(normalizeError({ response: { data } }));
-        setParsedInsights(null);
-        setShowParsed(true);
-        return;
-      }
-      setParsedInsights(data);
-      setShowParsed(true);
-    } catch (err) {
-      setParseError(normalizeError(err));
-      setParsedInsights(null);
-      setShowParsed(true);
-    } finally {
-      setParseLoading(false);
     }
   };
 
@@ -242,16 +192,12 @@ const EnhanceResumePage = () => {
         resume_text: enhancedResume,
         resume_source: "enhancer",
       };
-      // For debugging:
-      console.log("POST", `${API_BASE}${SAVE_RESUME_URL}`, payload);
       const { data, status } = await api.post(SAVE_RESUME_URL, payload, {
         headers: { "Content-Type": "application/json" },
-        timeout: 30000,          // ⬅️ 30s for DB save
+        timeout: 30000,
         validateStatus: () => true,
       });
-      if (status >= 400 || data?.detail) {
-        throw { response: { data, status } };
-      }
+      if (status >= 400 || data?.detail) throw { response: { data, status } };
       alert("✅ Saved to My Resumes!");
       navigate("/my-resumes");
     } catch (err) {
@@ -302,93 +248,149 @@ const EnhanceResumePage = () => {
     saveAs(blob, `${resumeName}_enhanced.txt`);
   };
 
+  // DOCX builder
   const downloadDOCX = async () => {
     if (!enhancedResume) return;
+
+    const sectionHeadings = new Set([
+      "summary",
+      "technical skills",
+      "skills",
+      "projects",
+      "professional experience",
+      "experience",
+      "education",
+      "certifications",
+    ]);
+
+    const lines = String(enhancedResume).replace(/\r\n/g, "\n").split("\n");
+    const children = [];
+
+    // Centered contact line if detected
+    if (lines.length > 0 && /@|linkedin|github|portfolio|phone|www|http/i.test(lines[0])) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: lines[0].trim(), bold: true })],
+          spacing: { after: 200 },
+          alignment: "center",
+        })
+      );
+      lines.shift();
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const line = raw.trim();
+
+      if (!line) {
+        children.push(new Paragraph({ spacing: { after: 200 } }));
+        continue;
+      }
+
+      const lc = line.toLowerCase().replace(/:$/, "");
+      if (sectionHeadings.has(lc)) {
+        children.push(
+          new Paragraph({
+            text: line.toUpperCase(),
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 300, after: 120 },
+          })
+        );
+        continue;
+      }
+
+      if (/^([•\-*])\s+/.test(line)) {
+        const text = line.replace(/^([•\-*])\s+/, "");
+        children.push(
+          new Paragraph({
+            text,
+            bullet: { level: 0 },
+            spacing: { after: 80 },
+          })
+        );
+        continue;
+      }
+
+      if (/^[A-Za-z][A-Za-z\s]+:\s/.test(line)) {
+        const [label, ...rest] = line.split(":");
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({ text: `${label}:`, bold: true }),
+              new TextRun({ text: ` ${rest.join(":").trim()}` }),
+            ],
+            spacing: { after: 120 },
+          })
+        );
+        continue;
+      }
+
+      children.push(
+        new Paragraph({
+          children: [new TextRun(line)],
+          spacing: { after: 120 },
+        })
+      );
+    }
+
     const doc = new Document({
-      sections: [{ children: [new Paragraph(String(enhancedResume))] }],
+      sections: [{ properties: {}, children }],
     });
-    const buffer = await Packer.toBlob(doc);
-    saveAs(buffer, `${resumeName}_enhanced.docx`);
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `${resumeName}_enhanced.docx`);
   };
 
+  const copyOutput = async () => {
+    if (!enhancedResume) return;
+    try {
+      await navigator.clipboard.writeText(String(enhancedResume));
+      alert("Copied enhanced resume to clipboard.");
+    } catch {
+      alert("Copy failed. Select and copy manually.");
+    }
+  };
+
+  const clearJD = () => setJdText("");
+
+  const outputCharCount = enhancedResume?.length || 0;
+  const jdCharCount = jdText?.length || 0;
+
   return (
-    <div style={styles.page}>
-      <div style={styles.container}>
-        <div style={styles.headerRow}>
-          <h2 style={styles.header}>
-            <span role="img" aria-label="resume">✨</span> Resume Enhancement
-          </h2>
-          <div style={styles.fileName}>
-            File:&nbsp;<span style={{ color: "#2563eb" }}>{safeText(resumeName) || "N/A"}</span>
+    <div style={sx.page}>
+      <div style={sx.container}>
+        {/* Sticky toolbar */}
+        <div style={sx.toolbar}>
+          <div style={sx.toolbarLeft}>
+            <div style={sx.breadcrumb}>Tools / <strong>Enhance Resume</strong></div>
+            <h2 style={sx.title}>
+              ✨ Resume Enhancement
+              <span style={sx.badge}>{loading ? "Running…" : enhancedResume ? "Ready" : "Idle"}</span>
+            </h2>
           </div>
-        </div>
-
-        <div style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div style={styles.switchRow}>
-              <label style={styles.switchLabel}>
-                <input
-                  type="checkbox"
-                  checked={rewriteExperience}
-                  onChange={(e) => setRewriteExperience(e.target.checked)}
-                />
-                <span>
-                  <strong>Rewrite&nbsp;Experience</strong> bullets with missing skills from JD
-                </span>
-              </label>
+          <div style={sx.toolbarRight}>
+            <div style={sx.fileName}>
+              File:&nbsp;<span style={{ color: "#2563eb" }}>{safeText(resumeName) || "N/A"}</span>
             </div>
-
-            <div style={styles.sliderRow}>
-              <label htmlFor="strength" style={styles.sliderLabel}>
-                Rewrite strength
-              </label>
-              <div style={styles.sliderWrap}>
-                <input
-                  id="strength"
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={Math.round(rewriteStrength * 100)}
-                  onChange={(e) => setRewriteStrength(Number(e.target.value) / 100)}
-                  style={styles.slider}
-                />
-                <span style={styles.sliderValue}>{Math.round(rewriteStrength * 100)}%</span>
-              </div>
+            <div style={sx.toolbarBtns}>
+              {/* Removed Back + Save here */}
+              <button
+                onClick={() => enhanceResume(true)}
+                style={sx.btnDark}
+                disabled={loading}
+                title="Re-run Enhancement"
+              >
+                {loading ? "Re-running…" : "🔄 Re-run"}
+              </button>
             </div>
           </div>
-
-          <div style={styles.jdBlock}>
-            <label htmlFor="jdctx" style={styles.jdLabel}>
-              Job Description context <span style={{ color: "#6b7280" }}>(optional, used for rewriting)</span>
-            </label>
-            <textarea
-              id="jdctx"
-              placeholder="Paste the JD here to tailor your Summary & Experience bullet points."
-              rows={5}
-              style={styles.jdTextarea}
-              value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-            />
-          </div>
-
-          <button
-            onClick={() => enhanceResume(true)}
-            style={styles.rerunBtn}
-            disabled={loading}
-            type="button"
-            title="Run enhancement with the current settings"
-          >
-            {loading ? "Re-running…" : "🔄 Re-run with these settings"}
-          </button>
         </div>
-
         {error && (
-          <div style={styles.errorBox}>
+          <div style={sx.errorBox}>
             <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{safeText(error)}</pre>
             {!resumeText && (
               <div style={{ marginTop: 8 }}>
-                <button style={styles.secondaryBtn} onClick={() => navigate("/resume-matcher")}>
+                <button style={sx.btnSecondary} onClick={() => navigate("/resume-matcher")}>
                   ← Go back to Resume Matcher
                 </button>
               </div>
@@ -396,215 +398,399 @@ const EnhanceResumePage = () => {
           </div>
         )}
 
-        <div style={styles.outputCard}>
-          {loading ? (
-            <p style={styles.loading}>⏳ Enhancing your resume…</p>
-          ) : (
-            <textarea
-              rows={22}
-              style={styles.outputTextarea}
-              value={safeText(enhancedResume)}
-              readOnly
-              placeholder={error ? "No enhanced resume to show." : "Enhanced resume will appear here."}
-            />
-          )}
-
-          <div style={styles.footerBar}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => navigate(-1)} style={styles.ghostBtn} aria-label="Go back">
-                ← Back
-              </button>
-              <button
-                onClick={saveToLibrary}
-                style={styles.saveBtn}
-                disabled={!enhancedResume || saving}
-                aria-label="Save enhanced resume to library"
-              >
-                {saving ? "Saving…" : "💾 Save to My Resumes"}
-              </button>
-            </div>
-
-            <div style={styles.downloadGroup}>
-              <button onClick={downloadPDF} style={styles.primaryBtn} disabled={!enhancedResume}>
-                📄 PDF
-              </button>
-              <button onClick={downloadDOCX} style={styles.primaryBtn} disabled={!enhancedResume}>
-                📃 DOCX
-              </button>
-              <button onClick={downloadTXT} style={styles.primaryBtn} disabled={!enhancedResume}>
-                📝 TXT
-              </button>
+        {/* Missing keyword chips */}
+        {missingKeywords?.length > 0 && (
+          <div style={sx.keywordRow}>
+            <div style={sx.keywordLabel}>Missing keywords from JD:</div>
+            <div style={sx.keywordWrap}>
+              {missingKeywords.map((k, i) => (
+                <span key={i} style={sx.chip}>
+                  {k}
+                </span>
+              ))}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Parsed Insights */}
-        <div style={styles.parsedCard}>
-          <div style={styles.parsedHeader}>
-            <h3 style={{ margin: 0 }}>🧠 Parsed Insights</h3>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                style={styles.secondaryBtn}
-                onClick={() => setShowParsed((v) => !v)}
-                type="button"
-              >
-                {showParsed ? "Hide" : "Show"}
-              </button>
-              <button
-                style={styles.primaryBtn}
-                onClick={parseCurrent}
-                disabled={parseLoading}
-                type="button"
-              >
-                {parseLoading ? "Parsing…" : "🔍 Parse current draft"}
-              </button>
+        {/* Grid */}
+        <div
+          style={{
+            ...sx.grid,
+            gridTemplateColumns: isNarrow ? "1fr" : "1.15fr 1fr",
+          }}
+        >
+          {/* LEFT: JD + controls */}
+          <div style={sx.card}>
+            <div style={sx.cardHeader}>
+              <div>
+                <div style={sx.cardTitle}>Job Description Context</div>
+                <div style={sx.cardSub}>Optional — helps tailor Summary & Experience bullets.</div>
+              </div>
+              <div style={sx.smallActions}>
+                <button onClick={clearJD} style={sx.btnTinyGhost} title="Clear JD">
+                  Clear
+                </button>
+              </div>
             </div>
+
+            <div style={sx.controlRow}>
+              <label style={sx.switchLabel}>
+                <input
+                  type="checkbox"
+                  checked={rewriteExperience}
+                  onChange={(e) => setRewriteExperience(e.target.checked)}
+                />
+                <span>
+                  <strong>Rewrite Experience</strong>&nbsp;
+                  <span style={{ color: "#64748b" }}>
+                    (inject JD keywords into bullets)
+                  </span>
+                </span>
+              </label>
+
+              <div style={sx.sliderRow}>
+                <label htmlFor="strength" style={sx.sliderLabel}>
+                  Rewrite strength
+                </label>
+                <div style={sx.sliderWrap}>
+                  <input
+                    id="strength"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={Math.round(rewriteStrength * 100)}
+                    onChange={(e) => setRewriteStrength(Number(e.target.value) / 100)}
+                    style={sx.slider}
+                  />
+                  <span style={sx.sliderValue}>{Math.round(rewriteStrength * 100)}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ position: "relative" }}>
+              <textarea
+                id="jdctx"
+                placeholder="Paste the JD here..."
+                rows={isNarrow ? 14 : 20}
+                style={sx.textarea}
+                value={jdText}
+                onChange={(e) => setJdText(e.target.value)}
+              />
+              <div style={sx.counter}>{jdCharCount.toLocaleString()} chars</div>
+            </div>
+
+            <button
+              onClick={() => enhanceResume(true)}
+              style={sx.btnPrimaryWide}
+              disabled={loading}
+              type="button"
+              title="Run enhancement with the current settings"
+            >
+              {loading ? "⏳ Enhancing…" : "🚀 Enhance with these settings"}
+            </button>
           </div>
 
-          {showParsed && (
-            <div style={{ marginTop: 10 }}>
-              {parseError && (
-                <div
-                  style={{
-                    margin: "8px 0 12px",
-                    background: "#FEF2F2",
-                    color: "#991B1B",
-                    border: "1px solid #FCA5A5",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                  }}
+          {/* RIGHT: Output */}
+          <div style={{ ...sx.card, paddingBottom: 0, display: "flex", flexDirection: "column" }}>
+            <div style={sx.cardHeader}>
+              <div>
+                <div style={sx.cardTitle}>Enhanced Resume</div>
+                <div style={sx.cardSub}>
+                  Read-only preview. Use the buttons below to copy or download.
+                </div>
+              </div>
+              <div style={sx.smallActions}>
+                <button onClick={copyOutput} style={sx.btnTinyGhost} disabled={!enhancedResume}>
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            <div style={{ position: "relative", flex: 1, minHeight: isNarrow ? 280 : 480 }}>
+              {loading ? (
+                <div style={sx.loadingBox}>⏳ Enhancing your resume…</div>
+              ) : (
+                <textarea
+                  readOnly
+                  rows={isNarrow ? 16 : 24}
+                  style={{ ...sx.textarea, height: "100%", resize: "none" }}
+                  value={safeText(enhancedResume)}
+                  placeholder={error ? "No enhanced resume to show." : "Enhanced resume will appear here."}
+                />
+              )}
+              <div style={sx.counter}>{outputCharCount.toLocaleString()} chars</div>
+            </div>
+
+            <div style={sx.footerBar}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => navigate(-1)} style={sx.btnGhost} aria-label="Go back">
+                  ← Back
+                </button>
+                <button
+                  onClick={saveToLibrary}
+                  style={sx.btnGreen}
+                  disabled={!enhancedResume || saving}
+                  aria-label="Save enhanced resume to library"
                 >
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{safeText(parseError)}</pre>
-                </div>
-              )}
-
-              {!parseError && !parsedInsights && (
-                <p style={{ color: "#64748b" }}>
-                  Click “Parse current draft” to extract skills, education, and experience structure.
-                </p>
-              )}
-
-              {!parseError && parsedInsights && (
-                <div style={styles.parsedGrid}>
-                  <div style={styles.parsedCol}>
-                    <div style={styles.parsedSection}>
-                      <div style={styles.parsedTitle}>Identity</div>
-                      <div><strong>Name:</strong> {safeText(parsedInsights?.name) || "—"}</div>
-                      <div><strong>Email:</strong> {safeText(parsedInsights?.email) || "—"}</div>
-                      <div><strong>Phone:</strong> {safeText(parsedInsights?.phone) || "—"}</div>
-                    </div>
-
-                    <div style={styles.parsedSection}>
-                      <div style={styles.parsedTitle}>Skills</div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {(parsedInsights?.skills || []).slice(0, 20).map((s, i) => (
-                          <span key={i} style={styles.skillChip}>{safeText(s)}</span>
-                        ))}
-                        {(parsedInsights?.skills || []).length === 0 && <span>—</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={styles.parsedCol}>
-                    <div style={styles.parsedSection}>
-                      <div style={styles.parsedTitle}>Education</div>
-                      {(parsedInsights?.education || []).length === 0 && <div>—</div>}
-                      {(parsedInsights?.education || []).map((e, i) => (
-                        <div key={i} style={styles.eduItem}>
-                          <div style={{ fontWeight: 600 }}>{safeText(e?.degree) || "—"}</div>
-                          <div>{safeText(e?.school) || "—"}</div>
-                          <div style={{ color: "#64748b" }}>
-                            {[safeText(e?.location), safeText(e?.start), safeText(e?.end || e?.year)]
-                              .filter(Boolean)
-                              .join(" • ") || "—"}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={styles.parsedSection}>
-                      <div style={styles.parsedTitle}>Experience</div>
-                      {(parsedInsights?.experience || []).length === 0 && <div>—</div>}
-                      {(parsedInsights?.experience || []).map((ex, i) => (
-                        <div key={i} style={styles.expItem}>
-                          <div style={{ fontWeight: 700 }}>
-                            {safeText(ex?.title) || "—"}{" "}
-                            <span style={{ fontWeight: 400 }}>
-                              @ {safeText(ex?.company) || "—"}
-                            </span>
-                          </div>
-                          <div style={{ color: "#64748b" }}>
-                            {[safeText(ex?.location), safeText(ex?.start), safeText(ex?.end)]
-                              .filter(Boolean)
-                              .join(" • ") || "—"}
-                          </div>
-                          <ul style={styles.bulletList}>
-                            {(ex?.bullets || []).slice(0, 6).map((b, j) => (
-                              <li key={j}>{safeText(b)}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
+                  {saving ? "Saving…" : "💾 Save to My Resumes"}
+                </button>
+              </div>
+              <div style={sx.downloadGroup}>
+                <button onClick={downloadPDF} style={sx.btnBlue} disabled={!enhancedResume}>
+                  📄 PDF
+                </button>
+                <button onClick={downloadDOCX} style={sx.btnBlue} disabled={!enhancedResume}>
+                  📃 DOCX
+                </button>
+                <button onClick={downloadTXT} style={sx.btnBlue} disabled={!enhancedResume}>
+                  📝 TXT
+                </button>
+              </div>
             </div>
-          )}
+          </div>
         </div>
-        {/* /Parsed Insights */}
+        {/* /Grid */}
       </div>
     </div>
   );
 };
 
-const styles = {
-  page: { background: "#fbf7f2", minHeight: "100vh", padding: "32px 20px", display: "flex", justifyContent: "center" },
-  container: { width: "min(1100px, 100%)" },
-  headerRow: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 },
-  header: { margin: 0, fontSize: "1.9rem", color: "#0f172a", letterSpacing: ".2px" },
-  fileName: { color: "#334155", fontSize: ".95rem" },
+/* -------------------- Styles -------------------- */
+const sx = {
+  page: {
+    minHeight: "100vh",
+    padding: "28px 18px",
+    display: "flex",
+    justifyContent: "center",
+    // soft gradient
+    background:
+      "linear-gradient(180deg, rgba(241,248,255,1) 0%, rgba(247,250,255,1) 60%, rgba(255,255,255,1) 100%)",
+  },
+  container: { width: "min(1380px, 100%)" },
 
-  panel: { background: "#fff", borderRadius: 12, boxShadow: "0 6px 20px rgba(15,23,42,.08)", border: "1px solid #eef2f7", padding: 16, marginBottom: 16 },
-  panelHeader: { display: "grid", gridTemplateColumns: "1fr 360px", gap: 16, alignItems: "center" },
-  switchRow: { display: "flex", alignItems: "center" },
+  toolbar: {
+    position: "sticky",
+    top: 0,
+    zIndex: 5,
+    backdropFilter: "saturate(140%) blur(6px)",
+    background: "rgba(255,255,255,0.75)",
+    border: "1px solid #eef2f7",
+    boxShadow: "0 6px 20px rgba(15,23,42,.06)",
+    borderRadius: 14,
+    padding: "14px 16px",
+    marginBottom: 14,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  toolbarLeft: { display: "flex", flexDirection: "column", gap: 4 },
+  breadcrumb: { color: "#64748b", fontSize: ".85rem" },
+  title: { margin: 0, fontSize: "1.65rem", color: "#0f172a", letterSpacing: ".2px", display: "flex", gap: 10, alignItems: "center" },
+  badge: {
+    display: "inline-block",
+    background: "#eef2ff",
+    color: "#3730a3",
+    border: "1px solid #c7d2fe",
+    padding: "2px 8px",
+    fontSize: ".8rem",
+    borderRadius: 999,
+    marginLeft: 8,
+  },
+  toolbarRight: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  fileName: { color: "#334155", fontSize: ".95rem" },
+  toolbarBtns: { display: "flex", gap: 8, flexWrap: "wrap" },
+
+  errorBox: {
+    marginTop: 14,
+    marginBottom: 12,
+    background: "#fef2f2",
+    color: "#b91c1c",
+    border: "1px solid #fecaca",
+    borderRadius: 12,
+    padding: "10px 12px",
+  },
+
+  keywordRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    margin: "8px 0 12px",
+    flexWrap: "wrap",
+  },
+  keywordLabel: { color: "#0f172a", fontWeight: 600, paddingTop: 2 },
+  keywordWrap: { display: "flex", gap: 8, flexWrap: "wrap" },
+  chip: {
+    padding: "4px 10px",
+    borderRadius: 999,
+    background: "#f1f5f9",
+    border: "1px solid #e2e8f0",
+    color: "#0f172a",
+    fontSize: ".85rem",
+  },
+
+  grid: {
+    display: "grid",
+    gap: 20,
+    alignItems: "stretch",
+  },
+
+  card: {
+    background: "#ffffff",
+    borderRadius: 14,
+    border: "1px solid #eef2f7",
+    boxShadow: "0 10px 30px rgba(15,23,42,.06)",
+    padding: 18,
+  },
+  cardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 10,
+  },
+  cardTitle: { fontWeight: 700, color: "#0f172a", fontSize: "1.1rem" },
+  cardSub: { color: "#64748b", fontSize: ".92rem" },
+  smallActions: { display: "flex", gap: 6 },
+
+  controlRow: {
+    display: "grid",
+    gridTemplateColumns: "1.2fr auto",
+    gap: 12,
+    alignItems: "center",
+    marginBottom: 10,
+  },
   switchLabel: { display: "flex", alignItems: "center", gap: 10, fontWeight: 600, color: "#0f172a" },
+
   sliderRow: { display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" },
   sliderLabel: { fontWeight: 600, color: "#0f172a" },
   sliderWrap: { display: "flex", alignItems: "center", gap: 10, minWidth: 220 },
-  slider: { width: 160, accentColor: "#2563eb" },
-  sliderValue: { minWidth: 44, textAlign: "center", fontVariantNumeric: "tabular-nums", color: "#2563eb", fontWeight: 700 },
+  slider: { width: 200, accentColor: "#2563eb" },
+  sliderValue: {
+    minWidth: 44,
+    textAlign: "center",
+    fontVariantNumeric: "tabular-nums",
+    color: "#2563eb",
+    fontWeight: 700,
+  },
 
-  jdBlock: { marginTop: 12 },
-  jdLabel: { display: "block", marginBottom: 6, fontWeight: 600, color: "#0f172a" },
-  jdTextarea: { width: "100%", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fbfdff", padding: "10px 12px", fontSize: "0.95rem", resize: "vertical", boxShadow: "inset 0 1px 0 rgba(0,0,0,.02)" },
+  textarea: {
+    width: "100%",
+    borderRadius: 12,
+    border: "1px solid #e5e7eb",
+    background: "#fbfdff",
+    padding: "12px 14px",
+    fontSize: "0.98rem",
+    lineHeight: 1.55,
+    resize: "vertical",
+    minHeight: 200,
+    outline: "none",
+    boxShadow: "inset 0 1px 0 rgba(0,0,0,.02)",
+  },
+  counter: {
+    position: "absolute",
+    right: 10,
+    bottom: 10,
+    fontSize: ".78rem",
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e5e7eb",
+    borderRadius: 999,
+    padding: "2px 8px",
+  },
 
-  rerunBtn: { width: "100%", marginTop: 12, padding: "10px 14px", borderRadius: 10, background: "#0f172a", color: "#fff", border: "1px solid #0f172a", fontWeight: 700, cursor: "pointer" },
+  loadingBox: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px dashed #cbd5e1",
+    borderRadius: 12,
+    background: "#f8fafc",
+    color: "#475569",
+    height: "100%",
+  },
 
-  errorBox: { marginTop: 12, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px" },
-
-  outputCard: { marginTop: 16, background: "#fff", borderRadius: 12, border: "1px solid #eef2f7", boxShadow: "0 6px 20px rgba(15,23,42,.08)", overflow: "hidden" },
-  loading: { padding: 16, color: "#374151" },
-  outputTextarea: { width: "100%", height: "60vh", minHeight: 360, padding: 16, border: "none", outline: "none", fontSize: "0.98rem", lineHeight: 1.55, background: "#fcfcff", whiteSpace: "pre-wrap" },
-
-  footerBar: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid #eef2f7", background: "#f8fafc", flexWrap: "wrap" },
-  ghostBtn: { padding: "10px 12px", background: "transparent", border: "1px solid #cbd5e1", color: "#0f172a", borderRadius: 10, cursor: "pointer" },
-  saveBtn: { padding: "10px 12px", background: "#10b981", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 700 },
-
+  footerBar: {
+    marginTop: "auto",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    padding: "12px 14px",
+    borderTop: "1px solid #eef2f7",
+    background: "#f8fafc",
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
+    flexWrap: "wrap",
+  },
   downloadGroup: { display: "flex", gap: 8, flexWrap: "wrap" },
-  primaryBtn: { padding: "10px 12px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 600 },
-  secondaryBtn: { padding: "8px 12px", background: "#eef2ff", border: "1px solid #c7d2fe", color: "#1e3a8a", borderRadius: 10, cursor: "pointer" },
 
-  parsedCard: { marginTop: 16, background: "#fff", borderRadius: 12, border: "1px solid #eef2f7", boxShadow: "0 6px 20px rgba(15,23,42,.08)", padding: 16 },
-  parsedHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  parsedGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 8 },
-  parsedCol: { display: "flex", flexDirection: "column", gap: 12 },
-  parsedSection: { border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fbfdff" },
-  parsedTitle: { fontWeight: 700, marginBottom: 6, color: "#0f172a" },
-  skillChip: { background: "#e0f2fe", color: "#075985", padding: "6px 10px", borderRadius: 999, fontSize: "0.85rem" },
-  eduItem: { marginBottom: 8 },
-  expItem: { marginBottom: 12 },
-  bulletList: { margin: "6px 0 0 16px" },
+  // Buttons
+  btnDark: {
+    padding: "10px 12px",
+    background: "#0f172a",
+    color: "#fff",
+    border: "1px solid #0f172a",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  btnGreen: {
+    padding: "10px 12px",
+    background: "#10b981",
+    color: "#fff",
+    border: "1px solid #059669",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  btnBlue: {
+    padding: "10px 12px",
+    background: "#2563eb",
+    color: "#fff",
+    border: "1px solid #1d4ed8",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  btnPrimaryWide: {
+    width: "100%",
+    marginTop: 12,
+    padding: "12px 14px",
+    borderRadius: 10,
+    background: "linear-gradient(90deg,#0ea5e9,#2563eb)",
+    color: "#fff",
+    border: "1px solid #1d4ed8",
+    fontWeight: 800,
+    cursor: "pointer",
+    letterSpacing: ".2px",
+  },
+  btnGhost: {
+    padding: "10px 12px",
+    background: "transparent",
+    border: "1px solid #cbd5e1",
+    color: "#0f172a",
+    borderRadius: 10,
+    cursor: "pointer",
+  },
+  btnSecondary: {
+    padding: "8px 12px",
+    background: "#eef2ff",
+    border: "1px solid #c7d2fe",
+    color: "#1e3a8a",
+    borderRadius: 10,
+    cursor: "pointer",
+  },
+  btnTinyGhost: {
+    padding: "6px 10px",
+    background: "transparent",
+    border: "1px solid #e2e8f0",
+    color: "#334155",
+    borderRadius: 999,
+    cursor: "pointer",
+    fontSize: ".85rem",
+  },
 };
 
 export default EnhanceResumePage;
