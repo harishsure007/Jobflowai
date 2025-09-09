@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from sqlalchemy.orm import Session
 import logging
+import re
 
 from backend.database import get_db
 from backend.models import Feedback
@@ -22,13 +23,22 @@ class FeedbackIn(BaseModel):
     feedback: str = Field(..., max_length=20000)
 
 class InterviewFeedbackRequest(BaseModel):
+    # Primary, supported fields
     question: str = Field(..., max_length=600, description="Interview question")
-    answer: str = Field(..., max_length=6000, description="Candidate's answer")
+    answer: Optional[str] = Field(None, max_length=6000, description="Candidate's answer")
     style: str = Field("STAR", max_length=40, description="STAR | CAR | custom")
     role: Optional[str] = Field(None, max_length=120)
     resume_text: Optional[str] = Field(None, max_length=10000)
     jd_text: Optional[str] = Field(None, max_length=10000)
     save: bool = Field(False, description="If true, save feedback to DB")
+
+    # 🔁 Back-compat aliases (some clients send these)
+    answer_transcript: Optional[str] = Field(None, alias="answer_transcript", description="Alias for 'answer'")
+    target_role: Optional[str] = Field(None, alias="target_role", description="Alias for 'role'")
+
+    class Config:
+        allow_population_by_field_name = True
+        extra = "ignore"  # ignore unknown fields like 'mode' or 'rubric' from older clients
 
 class InterviewFeedbackResponse(BaseModel):
     score: int
@@ -126,22 +136,40 @@ def interview_answer_feedback(
       - improvements (bullets)
       - improved_answer (concise rewrite)
     Optionally saves the feedback to DB when req.save == True.
+
+    Back-compat:
+    - Accepts either 'answer' or 'answer_transcript'
+    - Accepts either 'role' or 'target_role'
+    - Ignores unknown legacy fields like 'mode'/'rubric'
     """
+    # ---- Back-compat field resolution ----
+    answer_text = (req.answer or req.answer_transcript or "").strip()
+    if not answer_text:
+        raise HTTPException(status_code=422, detail="Answer is required (field 'answer' or 'answer_transcript').")
+
+    role_text = (req.role or req.target_role or "").strip() or None
+
+    # ---- Build optional context ----
     context_bits = []
-    if req.role:
-        context_bits.append(f"Role: {req.role}")
+    if role_text:
+        context_bits.append(f"Role: {role_text}")
     if req.resume_text:
         context_bits.append(f"Resume:\n{req.resume_text}")
     if req.jd_text:
         context_bits.append(f"Job Description:\n{req.jd_text}")
     context = "\n\n".join(context_bits)
 
+    # ---- Prompt ----
     prompt = (
         f"You are an expert interview coach.\n"
         f"Evaluate the candidate's answer using {req.style} structure. Be concise and actionable.\n\n"
-        f"{context}\n\n"
+        f"{context}\n\n" if context else
+        f"You are an expert interview coach.\n"
+        f"Evaluate the candidate's answer using {req.style} structure. Be concise and actionable.\n\n"
+    )
+    prompt += (
         f"Interview Question:\n{req.question}\n\n"
-        f"Candidate Answer:\n{req.answer}\n\n"
+        f"Candidate Answer:\n{answer_text}\n\n"
         "Respond in EXACTLY this format:\n"
         "SCORE: x/10\n"
         "STRENGTHS:\n- item\n- item\n"
@@ -155,38 +183,51 @@ def interview_answer_feedback(
             system_prompt="You are an interview coach. Output MUST follow the requested headings exactly.",
             temperature=0.5,
         )
-        text = str(raw)
+        text = str(raw or "")
 
         # ---- Parse the model output into structured fields ----
-        lines = [l.rstrip() for l in text.splitlines()]
-        score_line = next((l for l in lines if l.upper().startswith("SCORE:")), "SCORE: 6/10")
-        try:
-            score_num = int(score_line.split(":")[1].split("/")[0].strip())
-        except Exception:
-            score_num = 6
+        # SCORE: robust extraction (first integer 0-10 before /10)
+        score_num = 6
+        m = re.search(r"SCORE:\s*(\d{1,2})\s*/\s*10", text, flags=re.I)
+        if m:
+            try:
+                val = int(m.group(1))
+                score_num = max(0, min(10, val))
+            except Exception:
+                pass
 
-        def collect(section_name: str) -> List[str]:
-            acc, grabbing = [], False
-            for l in lines:
-                if l.upper().startswith(section_name):
-                    grabbing = True
+        def collect_list(section: str) -> List[str]:
+            """
+            Collect '- item' lines under the given SECTION: header until next SECTION or end.
+            """
+            items: List[str] = []
+            # Normalize newlines; find section start
+            pattern = re.compile(rf"^{section}\s*$", flags=re.I | re.M)
+            start = pattern.search(text)
+            if not start:
+                return items
+            # Slice from start to either next big header or end
+            after = text[start.end():]
+            stop = re.search(r"^\s*(STRENGTHS:|IMPROVEMENTS:|IMPROVED_ANSWER:)\s*$", after, flags=re.I | re.M)
+            block = after[: stop.start()] if stop else after
+            # Collect bullets (accept -, *, •)
+            for line in block.splitlines():
+                line = line.strip()
+                if not line:
                     continue
-                if grabbing:
-                    if l.strip().upper().startswith("IMPROVEMENTS:") and section_name != "IMPROVEMENTS:":
-                        break
-                    if l.strip().upper().startswith("IMPROVED_ANSWER:"):
-                        break
-                    if l.strip().startswith("- "):
-                        acc.append(l.strip()[2:].strip())
-            return acc
+                bullet = re.sub(r"^(\-|\*|•)\s*", "", line)
+                if bullet:
+                    items.append(bullet)
+            return items
 
-        strengths = collect("STRENGTHS:")
-        improvements = collect("IMPROVEMENTS:")
+        strengths = collect_list("STRENGTHS:")
+        improvements = collect_list("IMPROVEMENTS:")
 
+        # Improved answer section
         improved_answer = ""
-        if "IMPROVED_ANSWER:" in text:
-            idx = text.index("IMPROVED_ANSWER:")
-            improved_answer = text[idx + len("IMPROVED_ANSWER:"):].strip()
+        m2 = re.search(r"IMPROVED_ANSWER:\s*(.*)$", text, flags=re.I | re.S)
+        if m2:
+            improved_answer = m2.group(1).strip()
 
         saved_id: Optional[int] = None
         if req.save:
@@ -200,7 +241,7 @@ def interview_answer_feedback(
                 )
                 entry = Feedback(
                     question=req.question,
-                    answer=req.answer,
+                    answer=answer_text,
                     feedback=feedback_text,
                 )
                 db.add(entry)

@@ -1,27 +1,74 @@
 # backend/utils/similarity.py
-from typing import Dict, Iterable, Tuple, Set, List, Optional
+from typing import Dict, Tuple, Set, List, Optional
 from functools import lru_cache
+from os import getenv
+
 from rapidfuzz import fuzz, process
 
 from backend.utils.text_normalize import normalize
-from backend.constants import SKILLS_SET, STOP_WORDS, PHRASES, SYNONYMS
+from backend.constants import SKILLS_SET as RAW_SKILLS, STOP_WORDS as RAW_STOP, PHRASES as RAW_PHRASES, SYNONYMS as RAW_SYNS
 
-# --------- Fuzzy thresholds (tune if needed) ----------
-STRICT = 92          # very close character-level match
-TOKEN_STRICT = 88    # token_set_ratio (handles order & dupes)
-LOOSE = 82           # last-chance near match for words
+# =========================
+# Env-tunable knobs (safe defaults)
+# =========================
+DEFAULT_STRICT = 92
+DEFAULT_TOKEN_STRICT = 88
+DEFAULT_LOOSE = 82
+STRICT = int(getenv("FUZZ_STRICT", str(DEFAULT_STRICT)))
+TOKEN_STRICT = int(getenv("FUZZ_TOKEN_STRICT", str(DEFAULT_TOKEN_STRICT)))
+LOOSE = int(getenv("FUZZ_LOOSE", str(DEFAULT_LOOSE)))
 
-# Phrase fuzzy threshold (comparing phrase vs entire resume text)
-PHRASE_STRICT = 90
-PHRASE_LOOSE = 84
+# Phrase fuzzy thresholds
+PHRASE_STRICT = int(getenv("PHRASE_STRICT", "90"))
+PHRASE_LOOSE = int(getenv("PHRASE_LOOSE", "84"))
 
-# --------- Weights for overall scoring ----------
-W_SKILL = 2.0        # each skill counts double
-W_PHRASE = 2.0       # phrases also count double
-W_WORD = 1.0         # generic tokens
+# Overall weights
+W_SKILL = float(getenv("W_SKILL", "2.0"))
+W_PHRASE = float(getenv("W_PHRASE", "2.0"))
+W_WORD = float(getenv("W_WORD", "1.0"))
+
+# Optional semantic (embeddings) blend
+USE_EMBED = getenv("USE_EMBED", "false").lower() in {"1", "true", "yes"}
+BASE_WEIGHT = float(getenv("BASE_WEIGHT", "0.4"))   # weight for deterministic score
+EMBED_WEIGHT = float(getenv("EMBED_WEIGHT", "0.6")) # weight for semantic score
+
+# Synonym expansion safety caps
+MAX_SYNONYM_HOPS = int(getenv("MAX_SYNONYM_HOPS", "1"))   # transitive expansion depth
+MAX_SYNONYM_SIZE = int(getenv("MAX_SYNONYM_SIZE", "2000"))  # hard cap on expanded token set size
+
+# Phrase fuzzy windowing to reduce false positives
+PHRASE_WINDOW = int(getenv("PHRASE_WINDOW", "16"))   # token-window size to compare against
+PHRASE_STEP = int(getenv("PHRASE_STEP", "4"))        # step size when sliding window
+
+# Default list size for UI
+DEFAULT_TOP_N = int(getenv("TOP_N_KEYWORDS", "40"))
 
 
-# --------- Helpers ----------
+# =========================
+# Normalize dictionaries once (speed + correctness)
+# =========================
+def _norm(s: str) -> str:
+    return normalize(s or "")
+
+STOP_WORDS: Set[str] = {_norm(x) for x in RAW_STOP if x}
+SKILLS_SET: Set[str] = {_norm(x) for x in RAW_SKILLS if x}
+PHRASES: Set[str] = {_norm(x) for x in RAW_PHRASES if x}
+
+SYNONYMS: Dict[str, Set[str]] = {}
+for k, vals in RAW_SYNS.items():
+    nk = _norm(k)
+    if not nk:
+        continue
+    bucket = SYNONYMS.setdefault(nk, set())
+    for v in vals:
+        nv = _norm(v)
+        if nv and nv != nk:
+            bucket.add(nv)
+
+
+# =========================
+# Helpers
+# =========================
 def _tokenize_words(text: str) -> List[str]:
     """Simple whitespace tokenization AFTER normalize(); filters stopwords."""
     return [t for t in text.split() if t and t not in STOP_WORDS]
@@ -34,54 +81,52 @@ def _extract_phrases(text: str, phrases: Set[str]) -> Set[str]:
     """
     if not phrases or not text:
         return set()
-    hits = set()
-    for p in phrases:
-        if p and p in text:
-            hits.add(p)
-    return hits
+    return {p for p in phrases if p and p in text}
 
 
-def _expand_synonyms_closure(tokens: Set[str]) -> Set[str]:
+def _expand_synonyms(tokens: Set[str]) -> Set[str]:
     """
-    Expand synonyms transitively until closure.
+    Bounded synonym expansion to avoid explosion.
     """
     if not tokens:
         return set()
     expanded = set(tokens)
-    added = True
-    while added:
-        added = False
+    for _ in range(max(0, MAX_SYNONYM_HOPS)):
+        new_items = set()
         for t in list(expanded):
-            if t in SYNONYMS:
-                new = set(SYNONYMS[t])
-                if not new.issubset(expanded):
-                    expanded.update(new)
-                    added = True
+            for v in SYNONYMS.get(t, ()):
+                if v not in expanded:
+                    new_items.add(v)
+        if not new_items:
+            break
+        expanded |= new_items
+        if len(expanded) >= MAX_SYNONYM_SIZE:
+            break
     return expanded
 
 
 @lru_cache(maxsize=4096)
-def _best_fuzzy_match_cached(term: str, candidates_tuple: tuple) -> Tuple[str, int]:
+def _best_fuzzy_match_cached(term: str, candidates_tuple: tuple) -> Tuple[str, int, str]:
     """
     Cached best candidate for `term` among candidates using multiple scorers.
-    candidates_tuple is an immutable tuple of candidate strings to enable caching.
+    Returns (best_word, best_score, scorer_name).
     """
     candidates = list(candidates_tuple)
-    best_word, best_score = "", 0
+    best_word, best_score, best_who = "", 0, ""
 
     b = process.extractOne(term, candidates, scorer=fuzz.QRatio)
     if b:
-        best_word, best_score = b[0], int(b[1])
+        best_word, best_score, best_who = b[0], int(b[1]), "qratio"
 
     b = process.extractOne(term, candidates, scorer=fuzz.token_set_ratio)
-    if b and b[1] > best_score:
-        best_word, best_score = b[0], int(b[1])
+    if b and int(b[1]) > best_score:
+        best_word, best_score, best_who = b[0], int(b[1]), "token_set"
 
     b = process.extractOne(term, candidates, scorer=fuzz.partial_ratio)
-    if b and b[1] > best_score:
-        best_word, best_score = b[0], int(b[1])
+    if b and int(b[1]) > best_score:
+        best_word, best_score, best_who = b[0], int(b[1]), "partial"
 
-    return best_word, best_score
+    return best_word, best_score, best_who
 
 
 def _match_with_fuzz(source: Set[str], target: Set[str]) -> Tuple[Set[str], Set[str]]:
@@ -98,43 +143,64 @@ def _match_with_fuzz(source: Set[str], target: Set[str]) -> Tuple[Set[str], Set[
     # Use cached matcher by passing an immutable snapshot of the source
     source_tuple = tuple(sorted(source))
     for t in target:
-        # exact quick check
         if t in source:
             matched.add(t)
             continue
-
-        # allow fuzzy (strict → loose)
-        _, score = _best_fuzzy_match_cached(t, source_tuple)
-        if score >= STRICT or score >= TOKEN_STRICT or score >= LOOSE:
-            matched.add(t)
-        else:
-            unmatched.add(t)
+        _, score, who = _best_fuzzy_match_cached(t, source_tuple)
+        ok = (
+            (who == "qratio" and score >= STRICT) or
+            (who == "token_set" and score >= TOKEN_STRICT) or
+            (who == "partial" and score >= LOOSE)
+        )
+        (matched if ok else unmatched).add(t)
     return matched, unmatched
 
 
-def _fuzzy_phrase_hits(resume_text_norm: str, jd_phrases: Set[str]) -> Tuple[Set[str], Set[str]]:
+def _fuzzy_phrase_hits_windowed(resume_text_norm: str, jd_phrases: Set[str]) -> Tuple[Set[str], Set[str]]:
     """
-    Fuzzy phrase matching by comparing each JD phrase against the entire normalized resume text.
-    Returns (matched_phrases, unmatched_phrases).
+    Fuzzy phrase matching by scanning windows of the resume text (reduces false positives
+    vs comparing against the entire resume body).
     """
     if not jd_phrases:
         return set(), set()
 
+    r_toks = resume_text_norm.split()
+    if not r_toks:
+        return set(), set(jd_phrases)
+
     matched, unmatched = set(), set()
+    n = len(r_toks)
+
     for phrase in jd_phrases:
+        if not phrase:
+            continue
         if phrase in resume_text_norm:
             matched.add(phrase)
             continue
-        # try fuzzy comparison of phrase vs whole resume text
-        score_q = fuzz.QRatio(phrase, resume_text_norm)
-        if score_q >= PHRASE_STRICT:
-            matched.add(phrase)
-            continue
-        score_part = fuzz.partial_ratio(phrase, resume_text_norm)
-        if score_part >= PHRASE_LOOSE:
+
+        # approximate phrase length by token count
+        plen = max(2, len(phrase.split()))
+        window = max(PHRASE_WINDOW, plen + 6)
+        step = max(1, min(PHRASE_STEP, window))  # guard
+
+        hit = False
+        # slide over resume tokens
+        for i in range(0, max(1, n - window + 1), step):
+            chunk = " ".join(r_toks[i:i + window])
+            # fast checks first
+            sc_q = fuzz.QRatio(phrase, chunk)
+            if sc_q >= PHRASE_STRICT:
+                hit = True
+                break
+            sc_p = fuzz.partial_ratio(phrase, chunk)
+            if sc_p >= PHRASE_LOOSE:
+                hit = True
+                break
+        if hit:
             matched.add(phrase)
         else:
             unmatched.add(phrase)
+
     return matched, unmatched
 
 
@@ -154,9 +220,9 @@ def _compute_sets(resume_text: str, jd_text: str) -> Tuple[Set[str], Set[str], S
     resume_phrases = _extract_phrases(norm_resume, PHRASES)
     jd_phrases = _extract_phrases(norm_jd, PHRASES)
 
-    # expand synonyms (closure) for both sides
-    resume_tokens = _expand_synonyms_closure(resume_tokens)
-    jd_tokens = _expand_synonyms_closure(jd_tokens)
+    # expand synonyms (bounded) for both sides
+    resume_tokens = _expand_synonyms(resume_tokens)
+    jd_tokens = _expand_synonyms(jd_tokens)
 
     return resume_tokens, jd_tokens, resume_phrases, jd_phrases, norm_resume, norm_jd
 
@@ -173,7 +239,27 @@ def _stable_keywords_list(items: Set[str], limit: Optional[int]) -> List[str]:
     return ordered
 
 
-# --------- Public API ----------
+def _semantic_percent(norm_resume: str, norm_jd: str) -> Optional[float]:
+    """
+    Compute a 0–100 'semantic' similarity percent using local embeddings.
+    Returns None if embeddings are disabled or unavailable.
+    """
+    if not USE_EMBED:
+        return None
+    try:
+        # Lazy import so that environments without sentence-transformers still work
+        from backend.utils.embeddings import embed, cosine
+        v = embed([norm_resume, norm_jd])  # normalized embeddings
+        sim = cosine(v[0], v[1])           # 0..1
+        return float(max(0.0, min(1.0, sim)) * 100.0)
+    except Exception:
+        # Fail-safe: just don't apply semantic boost
+        return None
+
+
+# =========================
+# Public API
+# =========================
 def compute_similarity(
     resume_text: str,
     jd_text: str,
@@ -189,22 +275,6 @@ def compute_similarity(
       comparison_type: "word" | "skill" | "overall"
       top_n_keywords: if provided, trims matched/unmatched keyword lists
       return_debug: if True, includes category-wise details for inspection
-
-    Returns (always present keys):
-      {
-        "match_percentage": float,
-        "matched_keywords": [...],
-        "unmatched_keywords": [...],
-        # if return_debug:
-        "debug": {
-            "matched_words": [...],
-            "unmatched_words": [...],
-            "matched_skills": [...],
-            "unmatched_skills": [...],
-            "matched_phrases": [...],
-            "unmatched_phrases": [...],
-        }
-      }
     """
     (
         resume_tokens,
@@ -226,13 +296,17 @@ def compute_similarity(
     # Word-level fuzzy
     matched_words, unmatched_words = _match_with_fuzz(resume_tokens, jd_tokens)
 
-    # Phrase-level (exact + fuzzy against full text)
+    # Phrase-level (exact + fuzzy with windowing)
     exact_phrase_matches = jd_phrases & resume_phrases
     jd_phrases_missing = jd_phrases - exact_phrase_matches
-    fuzzy_phrase_matches, fuzzy_phrase_misses = _fuzzy_phrase_hits(norm_resume, jd_phrases_missing)
+    fuzzy_phrase_matches, fuzzy_phrase_misses = _fuzzy_phrase_hits_windowed(norm_resume, jd_phrases_missing)
 
     matched_phrases = exact_phrase_matches | fuzzy_phrase_matches
     unmatched_phrases = fuzzy_phrase_misses  # whatever phrases still not found
+
+    # Defaults for debug
+    matched_skills: Set[str] = set()
+    unmatched_skills: Set[str] = set()
 
     if comparison_type == "skill":
         # focus purely on skills (with fuzzy word matching boundaries)
@@ -252,10 +326,10 @@ def compute_similarity(
         resume_skills = resume_tokens & SKILLS_SET
         jd_skills = jd_tokens & SKILLS_SET
 
-        m_skills, u_skills = _match_with_fuzz(resume_skills, jd_skills)
+        matched_skills, unmatched_skills = _match_with_fuzz(resume_skills, jd_skills)
 
         # Matches / desired sets
-        matched = matched_words | m_skills | matched_phrases
+        matched = matched_words | matched_skills | matched_phrases
         desired_tokens = jd_tokens
         desired_phrases = jd_phrases
         desired_skills = jd_skills
@@ -271,10 +345,17 @@ def compute_similarity(
             + W_SKILL * len(desired_skills)
             + W_PHRASE * len(desired_phrases)
         )
-        match_percentage = round((score / total) * 100, 2) if total else 0.0
+        base_percent = round((score / total) * 100, 2) if total else 0.0
+
+        # Optional semantic boost (embeddings)
+        sem_percent = _semantic_percent(norm_resume, norm_jd)
+        if sem_percent is not None:
+            blended = BASE_WEIGHT * base_percent + EMBED_WEIGHT * sem_percent
+            match_percentage = round(max(0.0, min(100.0, blended)), 2)
+        else:
+            match_percentage = base_percent
 
         unmatched = (desired_tokens | desired_phrases | desired_skills) - matched
-        matched_skills, unmatched_skills = m_skills, u_skills  # for debug view
 
     else:  # "word" — words + phrases (equal weight)
         matched = matched_words | matched_phrases
@@ -292,9 +373,10 @@ def compute_similarity(
     # Clamp just in case any float wobble
     match_percentage = max(0.0, min(100.0, match_percentage))
 
-    # UI-friendly lists
-    matched_list = _stable_keywords_list(matched, top_n_keywords)
-    unmatched_list = _stable_keywords_list(unmatched, top_n_keywords)
+    # UI-friendly lists (default-cap to keep payloads small)
+    cap = DEFAULT_TOP_N if top_n_keywords is None else top_n_keywords
+    matched_list = _stable_keywords_list(matched, cap)
+    unmatched_list = _stable_keywords_list(unmatched, cap)
 
     out: Dict[str, object] = {
         "match_percentage": match_percentage,
@@ -303,13 +385,17 @@ def compute_similarity(
     }
 
     if return_debug:
-        out["debug"] = {
-            "matched_words": _stable_keywords_list(matched_words, top_n_keywords),
-            "unmatched_words": _stable_keywords_list(unmatched_words, top_n_keywords),
-            "matched_skills": _stable_keywords_list(matched_skills, top_n_keywords),
-            "unmatched_skills": _stable_keywords_list(unmatched_skills, top_n_keywords),
-            "matched_phrases": _stable_keywords_list(matched_phrases, top_n_keywords),
-            "unmatched_phrases": _stable_keywords_list(unmatched_phrases, top_n_keywords),
+        debug: Dict[str, object] = {
+            "matched_words": _stable_keywords_list(matched_words, cap),
+            "unmatched_words": _stable_keywords_list(unmatched_words, cap),
+            "matched_skills": _stable_keywords_list(matched_skills, cap),
+            "unmatched_skills": _stable_keywords_list(unmatched_skills, cap),
+            "matched_phrases": _stable_keywords_list(matched_phrases, cap),
+            "unmatched_phrases": _stable_keywords_list(unmatched_phrases, cap),
         }
+        if comparison_type == "overall":
+            debug["base_percent"] = float(base_percent) if "base_percent" in locals() else None
+            debug["semantic_percent"] = float(sem_percent) if "sem_percent" in locals() else None
+        out["debug"] = debug
 
     return out

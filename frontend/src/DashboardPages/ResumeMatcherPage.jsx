@@ -23,12 +23,12 @@ const ResumeMatcherPage = () => {
   const [jobDescriptionFile, setJobDescriptionFile] = useState(null);
   const [jobDescriptionText, setJobDescriptionText] = useState("");
   const [comparisonResult, setComparisonResult] = useState(null);
-  const [jdText, setJdText] = useState(""); // backend echo of JD
+  const [jdText, setJdText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [comparisonType, setComparisonType] = useState("word");
+  const [comparisonType, setComparisonType] = useState("overall"); // default to overall
   const navigate = useNavigate();
 
-  // Parsed Insights (first resume only) — option removed; keep flags off
+  // kept off
   const [showInsights, setShowInsights] = useState(false);
   const [parsed, setParsed] = useState(null);
   const [parseLoading, setParseLoading] = useState(false);
@@ -69,7 +69,6 @@ const ResumeMatcherPage = () => {
     const next = [...resumes, ...filesWithMeta];
     setResumes(next);
 
-    // Keep behavior disabled since option is removed
     if (showInsights) {
       const firstFile = next[0]?.file;
       if (firstFile) {
@@ -93,7 +92,6 @@ const ResumeMatcherPage = () => {
 
   const handleResumeUpload = (e) => addResumes(Array.from(e.target.files || []));
   const prevent = (e) => e.preventDefault();
-
   const handleDropResumes = (e) => {
     e.preventDefault();
     addResumes(Array.from(e.dataTransfer?.files || []));
@@ -122,8 +120,6 @@ const ResumeMatcherPage = () => {
       }
     }
   };
-
-  // Removed: handleInsightsToggle (option gone)
 
   const handleJobDescriptionUpload = (e) => {
     const file = (e.target.files || [])[0];
@@ -175,7 +171,11 @@ const ResumeMatcherPage = () => {
     resumes.forEach(({ file }) => formData.append("resumes", file));
     if (jobDescriptionFile) formData.append("jd_file", jobDescriptionFile);
     else formData.append("jd_text", jobDescriptionText);
+
     formData.append("comparison_type", comparisonType);
+    formData.append("top_n_keywords", "40");
+    formData.append("return_text", "true");
+    formData.append("max_pdf_pages", "60");
 
     try {
       const response = await axios.post(COMPARE_URL, formData, {
@@ -206,7 +206,7 @@ const ResumeMatcherPage = () => {
   const getFileIcon = (fileName = "") => {
     const ext = fileName.split(".").pop()?.toLowerCase();
     if (ext === "pdf") return <FaFilePdf color="#e11d48" style={styles.fileIcon} title="PDF file" />;
-    if (ext === "doc" || ext === "docx")
+    if (ext === "docx")
       return <FaFileWord color="#1d4ed8" style={styles.fileIcon} title="Word document" />;
     if (ext === "txt") return <FaFileAlt color="#059669" style={styles.fileIcon} title="Text file" />;
     return <FaFileAlt style={styles.fileIcon} title="File" />;
@@ -250,7 +250,7 @@ const ResumeMatcherPage = () => {
               <input
                 id="resume-upload"
                 type="file"
-                accept=".pdf,.doc,.docx,.txt"
+                accept=".pdf,.docx,.txt"
                 multiple
                 onChange={handleResumeUpload}
                 style={{ display: "none" }}
@@ -300,7 +300,7 @@ const ResumeMatcherPage = () => {
               <input
                 id="jd-upload"
                 type="file"
-                accept=".pdf,.doc,.docx,.txt"
+                accept=".pdf,.docx,.txt"
                 onChange={handleJobDescriptionUpload}
                 style={{ display: "none" }}
               />
@@ -350,7 +350,7 @@ const ResumeMatcherPage = () => {
             />
           </section>
 
-          {/* Comparison Type (kept) */}
+          {/* Comparison Type */}
           <section style={styles.card}>
             <label style={styles.label}>Comparison Type</label>
             <div style={styles.chipsRow}>
@@ -383,11 +383,12 @@ const ResumeMatcherPage = () => {
               <span style={styles.badge}><FaBolt style={{ marginRight: 6 }} /> AI-assisted</span>
               <span style={styles.badgeSoft}>ATS-aware matching</span>
             </div>
-            <h1 style={styles.heroTitle}>Resume ⇄ JD Matcher</h1>
-            <p style={styles.heroSub}>
-              Compare your resumes with the job description and see matched & missing keywords instantly.
-            </p>
           </div>
+
+          <h1 style={styles.heroTitle}>Resume ⇄ JD Matcher</h1>
+          <p style={styles.heroSub}>
+            Compare your resumes with the job description and see matched & missing keywords instantly.
+          </p>
 
           <section style={styles.resultShell}>
             <div style={styles.resultHeader}>
@@ -449,9 +450,11 @@ function ResultCard({ result, onEnhance }) {
   return (
     <div style={styles.resultCard}>
       <div style={styles.resultCardHeader}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, maxWidth: "100%" }}>
           {statusIcon}
-          <h4 style={{ margin: 0 }}>{result?.fileName || "Resume"}</h4>
+          <h4 style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {result?.fileName || "Resume"}
+          </h4>
         </div>
         <span style={styles.pct}>{pct}%</span>
       </div>
@@ -505,7 +508,6 @@ function ProgressBar({ value = 0 }) {
 }
 
 function ParsedInsights() {
-  // Component kept to avoid breaking imports; not rendered anymore
   return null;
 }
 
@@ -548,6 +550,9 @@ const styles = {
     padding: 24,
     boxShadow: "2px 0 8px rgba(0,0,0,0.05)",
     borderRadius: 12,
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
   },
   sideHeader: { margin: 0, color: colors.ink, fontSize: 18 },
 
@@ -557,16 +562,31 @@ const styles = {
     borderRadius: 16,
     boxShadow: "0 10px 28px rgba(15,23,42,0.06)",
     padding: 14,
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
   },
   cardHeader: {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    paddingBottom: 8, borderBottom: `1px solid ${colors.border}`, marginBottom: 10,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 8,
+    borderBottom: `1px solid ${colors.border}`,
+    marginBottom: 10,
+    minWidth: 0,
+    maxWidth: "100%",
   },
   cardTitle: { margin: 0, color: colors.ink, fontSize: 16 },
   link: {
-    display: "inline-flex", alignItems: "center", gap: 6,
-    color: colors.brandDark, borderBottom: `1px dashed ${colors.brandDark}`,
-    textDecoration: "none", fontWeight: 700, cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    color: colors.brandDark,
+    borderBottom: `1px dashed ${colors.brandDark}`,
+    textDecoration: "none",
+    fontWeight: 700,
+    cursor: "pointer",
+    flexShrink: 0,
   },
 
   dropzone: {
@@ -579,9 +599,18 @@ const styles = {
     color: "#64748b",
     background: "#fafafa",
     textAlign: "center",
+    minWidth: 0,
   },
 
-  filePreview: { marginTop: 10, display: "grid", gap: 8 },
+  filePreview: {
+    marginTop: 10,
+    display: "grid",
+    gap: 8,
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
+  },
+
   fileItem: {
     display: "flex",
     alignItems: "center",
@@ -590,9 +619,21 @@ const styles = {
     padding: "8px 12px",
     borderRadius: 10,
     fontSize: "0.92rem",
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
   },
-  fileIcon: { fontSize: "1.15rem" },
-  fileName: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  fileIcon: { fontSize: "1.15rem", flexShrink: 0 },
+  fileName: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    wordBreak: "break-all",
+    display: "block",
+  },
   xBtn: {
     marginLeft: "auto",
     background: "transparent",
@@ -601,10 +642,9 @@ const styles = {
     cursor: "pointer",
     padding: "4px 8px",
     borderRadius: 8,
+    flexShrink: 0,
   },
   emptyHint: { color: "#94a3b8", fontStyle: "italic", fontSize: 13 },
-
-  // (Toggle row removed)
 
   label: { display: "block", marginBottom: 8, fontWeight: 700, color: colors.ink },
   textarea: {
@@ -671,15 +711,26 @@ const styles = {
     color: colors.ink,
     fontWeight: 800,
   },
-  heroSub: { margin: 0, color: colors.inkSoft, fontSize: 14 },
+  heroSub: { margin: "0 0 12px 0", color: colors.inkSoft, fontSize: 14 },
 
   badge: {
-    display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999,
-    background: colors.brand, color: "#fff", fontWeight: 700, fontSize: 12,
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: colors.brand,
+    color: "#fff",
+    fontWeight: 700,
+    fontSize: 12,
   },
   badgeSoft: {
-    display: "inline-block", padding: "6px 10px", borderRadius: 999,
-    background: colors.brandSoft, color: colors.brandDark, fontWeight: 700, fontSize: 12,
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: colors.brandSoft,
+    color: colors.brandDark,
+    fontWeight: 700,
+    fontSize: 12,
   },
 
   resultShell: {
@@ -714,15 +765,29 @@ const styles = {
     padding: 14,
   },
   resultCardHeader: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    minWidth: 0,
   },
   pct: {
-    fontWeight: 800, color: colors.ink, border: `1px solid ${colors.border}`, padding: "4px 8px",
-    borderRadius: 999, minWidth: 56, textAlign: "center",
+    fontWeight: 800,
+    color: colors.ink,
+    border: `1px solid ${colors.border}`,
+    padding: "4px 8px",
+    borderRadius: 999,
+    minWidth: 56,
+    textAlign: "center",
+    flexShrink: 0,
   },
 
   progressOuter: {
-    width: "100%", height: 10, background: "#f1f5f9", borderRadius: 999, overflow: "hidden",
+    width: "100%",
+    height: 10,
+    background: "#f1f5f9",
+    borderRadius: 999,
+    overflow: "hidden",
     marginBottom: 10,
   },
   progressInner: { height: "100%", background: colors.accent },
@@ -773,7 +838,6 @@ const styles = {
 };
 
 const insights = {
-  // Not used anymore (panel removed)
   card: { display: "none" },
   title: {},
   grid: {},

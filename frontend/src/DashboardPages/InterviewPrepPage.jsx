@@ -178,7 +178,7 @@ export default function InterviewPrepPage() {
         role: role || "Candidate",
         experience: "2 years",
         focus: questionType, // "technical" | "behavioral" | "system design"
-        count: 5,
+        count: 10,
       });
       const qs = Array.isArray(data?.questions) ? data.questions : [];
       setQuestions(qs);

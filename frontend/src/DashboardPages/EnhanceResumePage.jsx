@@ -373,7 +373,6 @@ const EnhanceResumePage = () => {
               File:&nbsp;<span style={{ color: "#2563eb" }}>{safeText(resumeName) || "N/A"}</span>
             </div>
             <div style={sx.toolbarBtns}>
-              {/* Removed Back + Save here */}
               <button
                 onClick={() => enhanceResume(true)}
                 style={sx.btnDark}
@@ -385,6 +384,7 @@ const EnhanceResumePage = () => {
             </div>
           </div>
         </div>
+
         {error && (
           <div style={sx.errorBox}>
             <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{safeText(error)}</pre>
@@ -416,7 +416,7 @@ const EnhanceResumePage = () => {
         <div
           style={{
             ...sx.grid,
-            gridTemplateColumns: isNarrow ? "1fr" : "1.15fr 1fr",
+            gridTemplateColumns: isNarrow ? "1fr" : "30% 70%",
           }}
         >
           {/* LEFT: JD + controls */}
@@ -433,45 +433,56 @@ const EnhanceResumePage = () => {
               </div>
             </div>
 
-            <div style={sx.controlRow}>
-              <label style={sx.switchLabel}>
-                <input
-                  type="checkbox"
-                  checked={rewriteExperience}
-                  onChange={(e) => setRewriteExperience(e.target.checked)}
-                />
-                <span>
-                  <strong>Rewrite Experience</strong>&nbsp;
-                  <span style={{ color: "#64748b" }}>
-                    (inject JD keywords into bullets)
-                  </span>
-                </span>
-              </label>
-
-              <div style={sx.sliderRow}>
-                <label htmlFor="strength" style={sx.sliderLabel}>
-                  Rewrite strength
-                </label>
-                <div style={sx.sliderWrap}>
+            {/* CLEAN OPTIONS BOX */}
+            <div style={sx.optionsBox}>
+              {/* Toggle */}
+              <div style={sx.optionRow}>
+                <label style={sx.switchLabel}>
                   <input
-                    id="strength"
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={Math.round(rewriteStrength * 100)}
-                    onChange={(e) => setRewriteStrength(Number(e.target.value) / 100)}
-                    style={sx.slider}
+                    type="checkbox"
+                    checked={rewriteExperience}
+                    onChange={(e) => setRewriteExperience(e.target.checked)}
+                    style={{ marginRight: 10 }}
                   />
-                  <span style={sx.sliderValue}>{Math.round(rewriteStrength * 100)}%</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#0f172a" }}>Rewrite Experience</div>
+                    <div style={sx.helpText}>Inject JD keywords into your experience bullets.</div>
+                  </div>
+                </label>
+              </div>
+
+              {/* Slider */}
+              <div style={sx.optionRowCol}>
+                <label htmlFor="strength" style={sx.sliderLabelRow}>
+                  <span>Rewrite strength</span>
+                  <span style={sx.sliderValuePill}>{Math.round(rewriteStrength * 100)}%</span>
+                </label>
+                <input
+                  id="strength"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={Math.round(rewriteStrength * 100)}
+                  onChange={(e) => setRewriteStrength(Number(e.target.value) / 100)}
+                  style={sx.sliderFull}
+                />
+                <div style={sx.tickRow}>
+                  <span>Soft</span>
+                  <span>Balanced</span>
+                  <span>Strong</span>
                 </div>
               </div>
             </div>
 
-            <div style={{ position: "relative" }}>
+            {/* JD textarea */}
+            <div style={{ position: "relative", marginTop: 12 }}>
+              <label htmlFor="jdctx" style={sx.textareaLabel}>
+                Paste Job Description
+              </label>
               <textarea
                 id="jdctx"
-                placeholder="Paste the JD here..."
+                placeholder="Paste the JD here…"
                 rows={isNarrow ? 14 : 20}
                 style={sx.textarea}
                 value={jdText}
@@ -563,7 +574,6 @@ const sx = {
     padding: "28px 18px",
     display: "flex",
     justifyContent: "center",
-    // soft gradient
     background:
       "linear-gradient(180deg, rgba(241,248,255,1) 0%, rgba(247,250,255,1) 60%, rgba(255,255,255,1) 100%)",
   },
@@ -654,25 +664,56 @@ const sx = {
   cardSub: { color: "#64748b", fontSize: ".92rem" },
   smallActions: { display: "flex", gap: 6 },
 
-  controlRow: {
+  /* --- New tidy options styling --- */
+  optionsBox: {
+    border: "1px solid #e6eef7",
+    background: "#f8fbff",
+    borderRadius: 12,
+    padding: "12px 12px",
     display: "grid",
-    gridTemplateColumns: "1.2fr auto",
     gap: 12,
-    alignItems: "center",
-    marginBottom: 10,
   },
-  switchLabel: { display: "flex", alignItems: "center", gap: 10, fontWeight: 600, color: "#0f172a" },
+  optionRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  optionRowCol: {
+    display: "grid",
+    gap: 8,
+  },
+  helpText: { color: "#64748b", fontSize: ".9rem", marginTop: 2 },
+  switchLabel: { display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" },
 
-  sliderRow: { display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" },
-  sliderLabel: { fontWeight: 600, color: "#0f172a" },
-  sliderWrap: { display: "flex", alignItems: "center", gap: 10, minWidth: 220 },
-  slider: { width: 200, accentColor: "#2563eb" },
-  sliderValue: {
-    minWidth: 44,
-    textAlign: "center",
-    fontVariantNumeric: "tabular-nums",
-    color: "#2563eb",
+  sliderLabelRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
     fontWeight: 700,
+    color: "#0f172a",
+  },
+  sliderValuePill: {
+    padding: "2px 8px",
+    borderRadius: 999,
+    background: "#eef2ff",
+    border: "1px solid #c7d2fe",
+    color: "#3730a3",
+    fontSize: ".85rem",
+    fontWeight: 700,
+  },
+  sliderFull: { width: "100%", accentColor: "#2563eb" },
+  tickRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    color: "#94a3b8",
+    fontSize: ".8rem",
+  },
+
+  textareaLabel: {
+    display: "block",
+    fontWeight: 700,
+    color: "#0f172a",
+    marginBottom: 6,
   },
 
   textarea: {
