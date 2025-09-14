@@ -4,23 +4,32 @@ import axios from "axios";
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000";
 const SEARCH_URL = `${API_BASE_URL}/api/v1/jobs/search`;
+const PER_PAGE = 10; // lock UI to 10 items per page
 
 export default function JobPostingsPage() {
   const [q, setQ] = useState("data analyst");
-  const [location, setLocation] = useState("remote");
-  const [remote, setRemote] = useState(true);
+  const [location, setLocation] = useState(""); // keep empty by default
+  const [remote, setRemote] = useState(false);  // default to false to avoid empty first load
   const [page, setPage] = useState(1);
 
   const [jobs, setJobs] = useState([]);
   const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");     // show informational messages (e.g., fallback)
 
   // filters
   const [employmentType, setEmploymentType] = useState("any");
   const [postedWithin, setPostedWithin] = useState("any");
   const [sourceFilter, setSourceFilter] = useState("any");
   const [expLevel, setExpLevel] = useState("any");
+
+  const totalPages = useMemo(() => {
+    if (typeof total === "number" && total >= 0) {
+      return Math.max(1, Math.ceil(total / PER_PAGE));
+    }
+    return null;
+  }, [total]);
 
   const sourceOptions = useMemo(() => {
     const uniq = new Set();
@@ -35,17 +44,22 @@ export default function JobPostingsPage() {
     return undefined;
   };
 
-  const fetchJobs = async (nextPage = page) => {
+  const fetchJobs = async (nextPage = page, opts = {}) => {
+    // opts.localRemote allows a one-off override for the remote flag (used in fallback)
+    const localRemote = typeof opts.localRemote === "boolean" ? opts.localRemote : remote;
     setLoading(true);
     setErr("");
+    if (!opts.silent) setNotice("");
+
     try {
       const res = await axios.get(SEARCH_URL, {
         params: {
           q,
-          location,
-          remote,
+          // only send location if it’s a real place (not the literal string "remote")
+          location: location && location.toLowerCase() !== "remote" ? location : undefined,
+          remote: localRemote,
           page: nextPage,
-          per_page: 20,
+          per_page: PER_PAGE, // use 10
           employment_type: employmentType === "any" ? undefined : employmentType,
           posted_within: toApiPostedWithin(postedWithin),
           source: sourceFilter === "any" ? undefined : sourceFilter,
@@ -55,16 +69,53 @@ export default function JobPostingsPage() {
       });
 
       const data = res.data;
+
+      let items = [];
+      let totalCount = null;
+
       if (Array.isArray(data)) {
-        setJobs(data);
-        setTotal(null);
+        items = data;
       } else if (data && Array.isArray(data.items)) {
-        setJobs(data.items);
-        setTotal(typeof data.total === "number" ? data.total : null);
-      } else {
-        setJobs([]);
-        setTotal(null);
+        items = data.items;
+        totalCount = typeof data.total === "number" ? data.total : null;
       }
+
+      // Fallback: if remote-only returned 0, retry once without remote
+      if (items.length === 0 && localRemote && !opts.didFallback) {
+        const res2 = await axios.get(SEARCH_URL, {
+          params: {
+            q,
+            location: location && location.toLowerCase() !== "remote" ? location : undefined,
+            remote: false, // turn off remote
+            page: 1,       // reset to first page for clarity
+            per_page: PER_PAGE, // use 10
+            employment_type: employmentType === "any" ? undefined : employmentType,
+            posted_within: toApiPostedWithin(postedWithin),
+            source: sourceFilter === "any" ? undefined : sourceFilter,
+            sort_by: "posted_at",
+            sort_order: "desc",
+          },
+        });
+
+        const data2 = res2.data;
+        let items2 = [];
+        let total2 = null;
+        if (Array.isArray(data2)) {
+          items2 = data2;
+        } else if (data2 && Array.isArray(data2.items)) {
+          items2 = data2.items;
+          total2 = typeof data2.total === "number" ? data2.total : null;
+        }
+
+        setJobs(items2);
+        setTotal(total2);
+        setPage(1);
+        setNotice("No remote-only results. Showing broader matches instead.");
+        return;
+      }
+
+      setJobs(items);
+      setTotal(totalCount);
     } catch (e) {
       console.error(e);
       setErr("Failed to fetch jobs. Please try again.");
@@ -89,12 +140,15 @@ export default function JobPostingsPage() {
       const p = page - 1;
       setPage(p);
       fetchJobs(p);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
   const handleNext = () => {
+    if (totalPages && page >= totalPages) return; // disable moving past last page
     const p = page + 1;
     setPage(p);
     fetchJobs(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const filteredJobs = useMemo(() => {
@@ -129,7 +183,7 @@ export default function JobPostingsPage() {
           />
           <input
             className="input"
-            placeholder="Location (e.g., New York or remote)"
+            placeholder="Location (e.g., New York or leave blank for anywhere)"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
           />
@@ -215,6 +269,9 @@ export default function JobPostingsPage() {
             {typeof total === "number" ? ` (server total: ${total})` : ""}
           </div>
         )}
+
+        {/* Notice for fallbacks */}
+        {!loading && notice && <div className="notice">{notice}</div>}
       </header>
 
       {err && <div className="alert">{err}</div>}
@@ -247,11 +304,14 @@ export default function JobPostingsPage() {
             </button>
             <span className="page-ind">
               Page {page}
-              {typeof total === "number"
-                ? ` • Showing ${filteredJobs.length} of ${total}`
-                : ""}
+              {totalPages ? ` of ${totalPages}` : ""}
+              {typeof total === "number" ? ` • Showing ${filteredJobs.length} of ${total}` : ""}
             </span>
-            <button className="btn nav" onClick={handleNext} disabled={loading}>
+            <button
+              className="btn nav"
+              onClick={handleNext}
+              disabled={loading || (totalPages ? page >= totalPages : false)}
+            >
               Next ▶
             </button>
           </div>
@@ -375,13 +435,14 @@ const css = `
 .btn.apply:hover { background:#15803d; }
 
 /* Card */
+.notice { margin-top: 10px; padding: 10px 12px; background:#ecfeff; border:1px solid #a5f3fc; color:#075985; border-radius:10px; }
 .list { display:grid; gap:18px; margin-top:18px; }
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:18px; padding:20px;
   box-shadow:0 2px 10px rgba(0,0,0,0.04); transition:transform .15s, box-shadow .15s;
 }
 .card:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,0.08); }
 .card-head { display:flex; justify-content:space-between; gap:16px; }
-.job-title { margin:0 0 6px; font-size:19px; font-weight:800; color:#111827; }
+.job-title { margin:0 0 6px; font-size:19px; font-weight:800; color: #111827; }
 .meta { display:flex; flex-wrap:wrap; gap:8px; }
 .chip { padding:4px 10px; border-radius:999px; background:#eef2ff; font-weight:600; font-size:12px; color:#1e293b; }
 .chip.soft { background:#f3f4f6; color:#374151; }

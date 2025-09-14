@@ -317,6 +317,8 @@ export default function ResumeCoverGenerator() {
     linkedin: "",
     github: "",
     portfolio: "",
+    // You can add per-run section overrides later:
+    // summary: "", skills: "", experience: "", education: "", certifications: "", projects: ""
   });
 
   const [loading, setLoading] = useState(false);
@@ -376,22 +378,19 @@ export default function ResumeCoverGenerator() {
   function buildGeneratePayload() {
     const resolvedType = docType === "auto" ? detectDocTypeFromCommand(command) : docType;
 
+    // Keep only filled overrides
     const cleanOverrides = Object.fromEntries(
       Object.entries(overrides).filter(([_, v]) => String(v || "").trim() !== "")
     );
 
+    // Backend expects these keys:
     const payload = {
-      command: command || "Generate professional documents",
-      doc_type: resolvedType,
-      jd_text: jdText || "",
-      include_profile: !!useProfile,
+      docType: resolvedType,                 // "resume" | "cover" | "both"
+      useProfile: !!useProfile,              // requires Bearer token when true
+      jobDescription: jdText || "",          // goes to guidance
+      role: (command || "").trim(),          // explicit role/target (optional)
+      overrides: cleanOverrides,             // contact + (optional) section overrides
     };
-
-    payload.role_or_target = (command || "").trim() || "General Candidate";
-
-    if (Object.keys(cleanOverrides).length > 0) {
-      payload.contact_overrides = cleanOverrides;
-    }
 
     return payload;
   }
@@ -412,18 +411,9 @@ export default function ResumeCoverGenerator() {
       const data = await postJSONMaybeAuth(`${API_BASE}/api/v1/resume-cover`, payload);
 
       const resume =
-        data?.resume ??
-        data?.resume_text ??
-        data?.resumeBody ??
-        data?.result?.resume ??
-        "";
-
+        data?.resume_text ?? data?.resume ?? data?.resumeBody ?? data?.result?.resume ?? "";
       const cover =
-        data?.cover_letter ??
-        data?.cover ??
-        data?.cover_text ??
-        data?.result?.cover_letter ??
-        "";
+        data?.cover_text ?? data?.cover_letter ?? data?.cover ?? data?.result?.cover_letter ?? "";
 
       const cleanedResume = stripContactSection(stripCodeFences(resume));
       const cleanedCover = stripContactSection(stripCodeFences(cover));
@@ -679,7 +669,7 @@ export default function ResumeCoverGenerator() {
             </div>
 
             {/* Output */}
-            {hasOutput && (
+            {Boolean(resumeText || coverText) && (
               <div style={{ display: "grid", gap: 18 }}>
                 {resumeText && (
                   <div style={styles.outputCard} className="fade-in">
@@ -742,7 +732,7 @@ const colors = {
   borderSoft: "#eef2f7",
   card: "#ffffff",
   hint: "#64748b",
-  brand: "#0ea5e9", // cyan-ish blue
+  brand: "#0ea5e9",
   brandDark: "#0284c7",
   brandSoft: "#e0f2fe",
   successSoft: "#ecfeff",

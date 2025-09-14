@@ -5,7 +5,7 @@ import os
 import re
 import textwrap
 import datetime as _dt
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Header
 from sqlalchemy.orm import Session
@@ -167,7 +167,6 @@ STYLE RULES:
 ...
 """
 
-
 COVER_SYSTEM = """
 You are a professional cover letter writer.
 Create a clean, business-style, one-page cover letter aligned to the role/company.
@@ -246,17 +245,17 @@ def _local_fallback(system_prompt: str, user_prompt: str) -> str:
 
         EXPERIENCE
         Company — Senior Data Analyst | 2017–Present
-        - Led analytics initiatives that improved operational efficiency by 30%.
-        - Built dashboards in Tableau/Power BI for exec decision-making.
-        - Automated pipelines with SQL/Python; reduced manual work by 10+ hrs/wk.
+        • Led analytics initiatives that improved operational efficiency by 30%.
+        • Built dashboards in Tableau/Power BI for exec decision-making.
+        • Automated pipelines with SQL/Python; reduced manual work by 10+ hrs/wk.
 
         Company — Data Analyst | 2015–2017
-        - Analyzed large datasets to identify trends; improved efficiency by 15%.
-        - Collaborated cross-functionally to streamline reporting workflows.
+        • Analyzed large datasets to identify trends; improved efficiency by 15%.
+        • Collaborated cross-functionally to streamline reporting workflows.
 
         PROJECTS
         Customer Retention Analysis (2019)
-        - Forecasting & churn insights; improved retention by 25% using scikit-learn & SQL.
+        • Forecasting & churn insights; improved retention by 25% using scikit-learn & SQL.
 
         EDUCATION
         Master’s in Data Science — University | 2015
@@ -291,8 +290,8 @@ def _safe_join(*parts: Optional[str], sep: str = " | ") -> str:
     vals = [p.strip() for p in parts if p and str(p).strip()]
     return sep.join(vals)
 
-def _format_contact_block(profile: Optional[Profile], user: User) -> str:
-    full_name = (getattr(profile, "full_name", None) or getattr(profile, "name", None) or user.email.split("@")[0]).strip()
+def _format_contact_block(profile: Optional[Profile], user: Optional[User]) -> str:
+    full_name = (getattr(profile, "full_name", None) or getattr(profile, "name", None) or (user.email.split("@")[0] if user else "")).strip()
     email     = (getattr(profile, "email", None) or getattr(user, "email", "") or "").strip()
     phone     = (getattr(profile, "phone", None) or "").strip()
 
@@ -337,6 +336,9 @@ def _strip_placeholder_header(text: str) -> str:
         break
     return "\n".join(lines[i:]).lstrip()
 
+def _normalize_inline(s: str) -> str:
+    return re.sub(r"\W+", "", s or "").lower()
+
 def _force_contact_on_top(contact_block: str, content: str) -> str:
     content = content.strip()
     content = _strip_placeholder_header(content)
@@ -344,9 +346,6 @@ def _force_contact_on_top(contact_block: str, content: str) -> str:
         return content
     body = content.replace(contact_block, "").strip()
     return (contact_block + ("\n\n" if body else "") + body).strip()
-
-def _normalize_inline(s: str) -> str:
-    return re.sub(r"\W+", "", s or "").lower()
 
 def _dedupe_contact_block(contact_block: str, content: str) -> str:
     content = content.strip()
@@ -375,102 +374,199 @@ def _dedupe_contact_block(contact_block: str, content: str) -> str:
     return content
 
 # =========================
+#   NEW: SECTION HELPERS
+# =========================
+def _coerce_text(val) -> str:
+    """Accept str | list[str] | dict | None and return clean text."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, (list, tuple)):
+        items = [str(x).strip() for x in val if str(x).strip()]
+        return "\n".join(items)
+    if isinstance(val, dict):
+        parts = []
+        for k, v in val.items():
+            vs = _coerce_text(v)
+            if vs:
+                parts.append(f"{k}: {vs}")
+        return "\n".join(parts)
+    return str(val).strip()
+
+def _pick(*vals, default: str = "") -> str:
+    for v in vals:
+        s = _coerce_text(v)
+        if s:
+            return s
+    return default
+
+def _derive_role_from_guidance(guidance: str) -> str:
+    m = re.search(
+        r"\b(data analyst|business analyst|software engineer|ml engineer|full[- ]stack|frontend|backend|data scientist)\b",
+        guidance,
+        re.I,
+    )
+    return (m.group(1).title() if m else "").strip()
+
+def _profile_sections(profile: Optional[Profile]) -> dict:
+    """Extracts all supported fields from Profile, flexible to your DB columns."""
+    if not profile:
+        return {}
+    return {
+        "full_name":      _pick(getattr(profile, "full_name", None), getattr(profile, "name", None)),
+        "email":          _coerce_text(getattr(profile, "email", None)),
+        "phone":          _coerce_text(getattr(profile, "phone", None)),
+        "location":       _pick(
+                              _coerce_text(", ".join([x for x in [getattr(profile, "city", None), getattr(profile, "state", None)] if _coerce_text(x)])),
+                              _coerce_text(getattr(profile, "location", None))
+                           ),
+        "linkedin":       _coerce_text(getattr(profile, "linkedin", None)),
+        "github":         _coerce_text(getattr(profile, "github", None)),
+        "portfolio":      _coerce_text(getattr(profile, "portfolio", None)),
+        "summary":        _coerce_text(getattr(profile, "summary", None)),
+        "skills":         _coerce_text(getattr(profile, "skills", None)),
+        "experience":     _coerce_text(getattr(profile, "experience", None)),
+        "education":      _coerce_text(getattr(profile, "education", None)),
+        "certifications": _coerce_text(getattr(profile, "certifications", None)),
+        "projects":       _coerce_text(getattr(profile, "projects", None)),
+    }
+
+def _merge_sections(base: dict, overrides: Optional[dict]) -> dict:
+    overrides = overrides or {}
+    merged = dict(base)
+    for k in [
+        "full_name","email","phone","location","linkedin","github","portfolio",
+        "summary","skills","experience","education","certifications","projects"
+    ]:
+        if k in overrides:
+            merged[k] = _coerce_text(overrides.get(k))
+    return merged
+
+# =========================
+#   PROMPT BUILDERS
+# =========================
+def _resume_prompt(contact_block: str, sections: dict, role: str, guidance: str) -> str:
+    return (
+        "CONTACT BLOCK\n"
+        f"{contact_block}\n\n"
+        "ROLE / FOCUS\n"
+        f"{role or '(unspecified)'}\n\n"
+        "CANDIDATE SECTIONS (use only what's present; omit empty sections)\n"
+        f"SUMMARY:\n{sections.get('summary','')}\n\n"
+        f"SKILLS:\n{sections.get('skills','')}\n\n"
+        f"EXPERIENCE:\n{sections.get('experience','')}\n\n"
+        f"EDUCATION:\n{sections.get('education','')}\n\n"
+        f"CERTIFICATIONS:\n{sections.get('certifications','')}\n\n"
+        f"PROJECTS:\n{sections.get('projects','')}\n\n"
+        "GUIDANCE (job description or notes):\n"
+        f"{guidance or '(none)'}\n\n"
+        "STRICT RULES\n"
+        "- Use EXACT section order & headings from the system prompt.\n"
+        "- Put the CONTACT BLOCK at the top, unchanged, only once.\n"
+        "- Do NOT invent missing facts; omit empty sections entirely.\n"
+        "- Use strong, quantified bullets where evidence exists.\n"
+        "- Keep output clean, readable, and ATS-compliant.\n"
+    )
+
+def _cover_prompt(contact_block: str, sections: dict, role: str, company: str, guidance: str, today_str: str) -> str:
+    return (
+        "CONTACT BLOCK\n"
+        f"{contact_block}\n\n"
+        f"{today_str}\n\n"
+        "TARGET ROLE / COMPANY\n"
+        f"Role: {role or '(unspecified)'}\n"
+        f"Company: {company or '(not specified)'}\n\n"
+        "CANDIDATE EVIDENCE (use only what's present; do not invent)\n"
+        f"SUMMARY:\n{sections.get('summary','')}\n\n"
+        f"KEY SKILLS:\n{sections.get('skills','')}\n\n"
+        f"EXPERIENCE EXCERPTS:\n{sections.get('experience','')}\n\n"
+        f"PROJECTS:\n{sections.get('projects','')}\n\n"
+        "GUIDANCE (job description or notes):\n"
+        f"{guidance or '(none)'}\n\n"
+        "STRICT RULES\n"
+        "- Start with CONTACT (unchanged), then DATE, then GREETING.\n"
+        "- 3–5 short paragraphs with specific wins/tools.\n"
+        "- Close with 'Sincerely,' and the contact-block name.\n"
+        "- No placeholders; never invent details.\n"
+    )
+
+def render_resume_text(contact_block: str, sections: dict, role: str, guidance: str) -> str:
+    prompt = _resume_prompt(contact_block, sections, role, guidance)
+    text = _call_openai(RESUME_SYSTEM, prompt)
+    text = _force_contact_on_top(contact_block, text) if contact_block else text
+    text = _dedupe_contact_block(contact_block, text)
+    return squeeze_blank_lines(text)
+
+def render_cover_text(contact_block: str, sections: dict, role: str, company: str, guidance: str, today_str: str) -> str:
+    prompt = _cover_prompt(contact_block, sections, role, company, guidance, today_str)
+    text = _call_openai(COVER_SYSTEM, prompt)
+    text = _force_contact_on_top(contact_block, text) if contact_block else text
+    text = _dedupe_contact_block(contact_block, text)
+    return squeeze_blank_lines(text)
+
+# =========================
 #        ROUTER
 # =========================
 router = APIRouter(tags=["Resume & Cover Generator"])
 
 @router.post("/resume-cover")
 def generate_resume_cover(
-    payload: dict = Body(...),            # accept plain dict to avoid model parsing issues
-    user: Optional[User] = Depends(get_optional_user),  # PUBLIC (no DB dependency)
+    payload: dict = Body(...),                     # accept plain dict to avoid model parsing issues
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     """
     Public: Generates resume and/or cover text in strict ATS-friendly format.
-    If a valid JWT is provided and include_contact=True, inject the user's Profile contact block at top.
+    If `useProfile` is true, a valid Bearer token is REQUIRED to pull the user's Profile.
+    Supports per-run `overrides` for any field.
     """
     try:
-        # Inputs
-        doc_type = str(payload.get("doc_type", "both")).lower()
-        role = (payload.get("role_or_target")
-                or payload.get("role")
-                or payload.get("targetRole")
-                or payload.get("title")
-                or "").strip()
-        guidance = (payload.get("guidance")
-                    or payload.get("jobDescription")
-                    or payload.get("jd")
-                    or payload.get("notes")
-                    or "").strip()
-        company = (payload.get("company")
-                   or payload.get("companyName")
-                   or payload.get("employer")
-                   or "").strip()
-        include_contact = bool(payload.get("include_contact", True))
+        # Inputs (support both camelCase and snake_case)
+        doc_type  = str(payload.get("doc_type") or payload.get("docType") or "both").lower()
+        guidance  = _pick(payload.get("guidance"), payload.get("jobDescription"), payload.get("jd"), payload.get("notes"))
+        company   = _pick(payload.get("company"), payload.get("companyName"), payload.get("employer"))
+        overrides: Dict[str, Any] = payload.get("overrides") or {}
+        use_profile = bool(payload.get("useProfile") or payload.get("use_profile") or payload.get("include_profile", False))
 
+        # Role: explicit -> derive from guidance -> empty
+        role = _pick(payload.get("role_or_target"), payload.get("role"), payload.get("targetRole"), payload.get("title"))
         if not role:
-            raise HTTPException(status_code=422, detail="role_or_target is required")
+            role = _derive_role_from_guidance(guidance)
 
-        # Only touch DB if there is an authenticated user AND contact injection is requested
+        # Auth / profile loading
+        user: Optional[User] = None
         profile: Optional[Profile] = None
-        if user and include_contact:
+        if use_profile:
+            # require token if they asked to use profile
+            if not authorization or not authorization.lower().startswith("bearer "):
+                raise HTTPException(status_code=401, detail="useProfile=true requires Authorization Bearer token")
+
+            # ✅ open a REAL session; do NOT pass get_db() generator
             db = SessionLocal()
             try:
+                user = get_current_user(authorization=authorization, db=db)
                 profile = _fetch_profile(db, user.id)
+                if not profile:
+                    raise HTTPException(status_code=404, detail="Profile not found for user")
             finally:
                 db.close()
+        else:
+            # Optional token → we can still detect the user (but we don't pull profile unless requested)
+            user = get_optional_user(authorization=authorization)
 
-        contact_block = _format_contact_block(profile, user) if (user and profile and include_contact) else ""
+        # Contact + sections
+        contact_block = _format_contact_block(profile, user) if (user and profile) else ""
+        base_sections = _profile_sections(profile) if profile else {}
+        merged_sections = _merge_sections(base_sections, overrides)
 
         today_str = _dt.date.today().strftime("%B %d, %Y")
-
-        resume_text: Optional[str] = None
-        cover_text: Optional[str] = None
-
-        # Decide targets
         target = doc_type if doc_type in ("resume", "cover", "both") else "both"
 
-        # ====== RESUME ======
+        resume_text = cover_text = None
         if target in ("resume", "both"):
-            u_prompt = (
-                "CONTACT BLOCK\n"
-                f"{contact_block}\n\n"
-                "ROLE / FOCUS\n"
-                f"{role}\n\n"
-                "GUIDANCE (optional from user/job posting)\n"
-                f"{guidance or '(none)'}\n\n"
-                "STRICT RULES\n"
-                "- Use EXACT section order & headings from the system prompt.\n"
-                "- Put the CONTACT BLOCK at the very top, unchanged, only once.\n"
-                "- Quantify achievements where plausible; mention tools used.\n"
-                "- No placeholders; never invent employers/dates/credentials.\n"
-                "- Keep output clean, readable, and ATS-compliant.\n"
-            )
-            raw = _call_openai(RESUME_SYSTEM, u_prompt)
-            resume_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
-            resume_text = _dedupe_contact_block(contact_block, resume_text)
-            resume_text = squeeze_blank_lines(resume_text)
-
-        # ====== COVER LETTER ======
+            resume_text = render_resume_text(contact_block, merged_sections, role, guidance)
         if target in ("cover", "both"):
-            u_prompt = (
-                "CONTACT BLOCK\n"
-                f"{contact_block}\n\n"
-                f"{today_str}\n\n"
-                "TARGET ROLE / COMPANY\n"
-                f"Role: {role}\n"
-                f"Company (if known): {company or '(not specified)'}\n\n"
-                "GUIDANCE (optional from user/job posting)\n"
-                f"{guidance or '(none)'}\n\n"
-                "STRICT RULES\n"
-                "- Start with CONTACT (unchanged), then DATE, then GREETING.\n"
-                "- 3–5 short paragraphs, quantified wins, tools used.\n"
-                "- Close with 'Sincerely,' and the contact-block name.\n"
-                "- No placeholders; never invent details.\n"
-            )
-            raw = _call_openai(COVER_SYSTEM, u_prompt)
-            cover_text = _force_contact_on_top(contact_block, raw) if contact_block else raw
-            cover_text = _dedupe_contact_block(contact_block, cover_text)
-            cover_text = squeeze_blank_lines(cover_text)
+            cover_text  = render_cover_text(contact_block, merged_sections, role, company, guidance, today_str)
 
         return {
             "ok": True,

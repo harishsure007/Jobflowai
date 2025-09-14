@@ -36,7 +36,8 @@ async def jobs_search(
     ),
     sort_order: Optional[str] = Query("desc", description="asc | desc"),
     page: int = Query(1, ge=1, description="1-based page index"),
-    per_page: int = Query(20, ge=1, le=100, description="items per page"),
+    per_page: int = Query(10, ge=1, le=100, description="items per page (default 10)"),
+
 ):
     """
     Aggregated job search endpoint:

@@ -9,11 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
 # -----------------------------
-# Load environment (.env files)
+# Load environment from backend/.env (robust)
 # -----------------------------
-env_loaded = load_dotenv(dotenv_path=Path("backend/.env"))
-if not env_loaded:
-    load_dotenv(dotenv_path=Path(".env"))
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 ENV = os.getenv("ENV", "dev").lower()
 AUTO_MIGRATE = os.getenv("AUTO_MIGRATE", "false").strip().lower() == "true"
@@ -53,7 +52,11 @@ from backend.routes import (  # noqa: E402
 )
 from backend.routes.profile import router as profile_router  # noqa: E402
 from backend.routes.jobs_debug import router as jobs_debug_router  # noqa: E402
-from backend.routes.news import router as news_router  # <-- NEW (RSS → JSON headlines)
+from backend.routes.news import router as news_router  # noqa: E402
+
+# ⬇️ NEW (Stripe payments + app-level trial)
+from backend.routes.payments import router as payments_router  # noqa: E402
+from backend.routes.trial import router as trial_router        # noqa: E402
 
 # -----------
 # CORS
@@ -79,10 +82,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,          # must be explicit when credentials=True
-    allow_credentials=True,                 # allow cookies if you ever need them
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],                    # includes Authorization, Content-Type, etc.
+    allow_headers=["*"],
     expose_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
@@ -112,7 +115,9 @@ if USE_AUTH_MIDDLEWARE:
                 # Public generators / news
                 "/api/v1/resume-cover",
                 "/api/v1/news/jobs",
-                # (keep /api/v1/resume-cover/save protected)
+
+                # ✅ Allow Stripe to post webhooks without JWT
+                "/api/v1/pay/webhook",
             },
         )
         logging.info("AuthMiddleware mounted (USE_AUTH_MIDDLEWARE=true)")
@@ -142,7 +147,6 @@ app.include_router(feedback.router,      prefix="/api/v1")
 app.include_router(parse.router,         prefix="/api/v1")
 
 # Auth (JWT + reset/otp)
-# ⬇️ Mount reset/OTP under /api/v1/auth so frontend /auth/* hits /api/v1/auth/*
 app.include_router(auth_reset.router,    prefix="/api/v1/auth", tags=["Auth (Reset)"])
 app.include_router(auth_routes.router,   prefix="/api/v1",      tags=["Auth (JWT)"])
 
@@ -152,12 +156,15 @@ app.include_router(resume_cover_router,  prefix="/api/v1")
 # Jobs + profile + debug
 app.include_router(jobs.router,          prefix="/api/v1")
 app.include_router(profile_router,       prefix="/api/v1")
+# (Optional) enable if you use the debug router:
+# app.include_router(jobs_debug_router,    prefix="/api/v1")
 
-# News (RSS aggregator)  <-- NEW
+# News (RSS aggregator)
 app.include_router(news_router)
 
-# jobs_debug_router usually has its own explicit prefix (e.g., "/api/v1/_debug")
-app.include_router(jobs_debug_router)
+# NEW: Payments + Trial (each file has its own /api/v1/* prefix)
+app.include_router(payments_router)      # /api/v1/pay/*
+app.include_router(trial_router)         # /api/v1/trial/*
 
 # -----------
 # Health & root
@@ -175,8 +182,16 @@ def root():
 # -----------
 print("ENV =", ENV)
 print("AUTO_MIGRATE =", AUTO_MIGRATE)
+print("ALLOWED_ORIGINS =", ALLOWED_ORIGINS)
 print("RAPIDAPI_KEY present?", bool(os.getenv("RAPIDAPI_KEY")))
 print("JSEARCH host/path =", os.getenv("JSEARCH_RAPIDAPI_HOST"), os.getenv("JSEARCH_RAPIDAPI_PATH"))
+print(
+    "Stripe keys present?",
+    bool(os.getenv("STRIPE_SECRET_KEY")),
+    bool(os.getenv("STRIPE_PRICE_PRO_MONTH")),
+    bool(os.getenv("STRIPE_PRICE_PRO_YEAR")),
+    bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
+)
 
 @app.on_event("startup")
 async def list_routes():

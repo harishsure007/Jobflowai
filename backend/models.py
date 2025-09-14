@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Index
+    Column, Integer, String, Text, DateTime, ForeignKey, Index, Boolean
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func as sa_func
@@ -34,6 +34,18 @@ class User(Base):
 
     created_at = Column(DateTime, nullable=False, server_default=sa_func.now())
     updated_at = Column(DateTime, nullable=False, server_default=sa_func.now(), onupdate=sa_func.now())
+
+    # === Payments / subscription ===
+    stripe_customer_id = Column(String, nullable=True)
+    subscription_status = Column(String, default="free")                  # trialing | active | past_due | canceled | unpaid | free
+    subscription_current_period_end = Column(DateTime, nullable=True)     # end-of-period timestamp
+    plan_key = Column(String, default="free")                             # pro_month | pro_year | free
+
+    # === Trial (day-based or credit-based) ===
+    trial_used = Column(Boolean, default=False)                           # one-time trial toggle
+    trial_started_at = Column(DateTime, nullable=True)
+    trial_expires_at = Column(DateTime, nullable=True)
+    trial_runs_left = Column(Integer, default=0)                          # for credit-based trials
 
     # Relationships
     resumes = relationship(
