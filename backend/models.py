@@ -163,3 +163,4 @@ class Profile(Base):
 
     def __repr__(self) -> str:
         return f"<Profile id={self.id} user_id={self.user_id} full_name={self.full_name!r}>"
+   
