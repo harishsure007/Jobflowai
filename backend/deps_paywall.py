@@ -16,3 +16,4 @@ def require_pro_or_trial(user: User = Depends(get_current_user)) -> User:
         return user
     # (Optionally inspect user.trial_used / trial_expires_at / trial_runs_left here)
     raise HTTPException(status_code=402, detail="Trial expired or upgrade required")
+   
