@@ -14,13 +14,11 @@ elif root_env.exists():
     load_dotenv(root_env)
 
 # === 🔐 Secrets (keep strict if you want; comment out to relax in dev) ===
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Optional for dev/testing
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-prod")  # Provide sensible default
 if not OPENAI_API_KEY:
-    raise ValueError("Missing OPENAI_API_KEY in .env")
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("Missing SECRET_KEY in .env")
+    import warnings
+    warnings.warn("OPENAI_API_KEY not set - AI features will be disabled", RuntimeWarning)
 
 # === ⚙️ Model Configuration ===
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4")

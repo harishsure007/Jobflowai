@@ -1,5 +1,6 @@
 # backend/deps.py
 import os
+import logging
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -8,16 +9,16 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
-from backend.models import User  # if your User is in backend/models.py
-# If your User is in backend/models/user.py instead, use:
-# from backend.models.user import User
+from backend.models import User
+from backend.security import JWT_SECRET, JWT_ALG
+
+logger = logging.getLogger(__name__)
 
 # OAuth2 bearer (we only use it to read the Authorization: Bearer <token> header)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-# Adjust if your auth uses a different secret/alg
-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "changeme"
-ALGORITHM = "HS256"
+# Use standardized JWT secret from security module
+ALGORITHM = JWT_ALG
 
 def get_db():
     """Yield a DB session and ensure it closes."""

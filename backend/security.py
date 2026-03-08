@@ -1,9 +1,14 @@
-import os, datetime as dt
+import os
+import datetime as dt
 import jwt
+import logging
 from fastapi import Header, HTTPException
 from passlib.context import CryptContext
 
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-prod")
+logger = logging.getLogger(__name__)
+
+# Standardized JWT secret handling (used across all auth modules)
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "change-me-in-prod"
 JWT_ALG = "HS256"
 JWT_EXPIRE_SECONDS = 60 * 60 * 24  # 24h
 
