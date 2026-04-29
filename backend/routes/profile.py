@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -57,6 +57,7 @@ class ProfileIn(BaseModel):
     extras: Optional[Dict[str, Any]] = None
 
 class ProfileOut(ProfileIn):
+    model_config = ConfigDict(from_attributes=True)
     id: int
 
 # ---- Helpers ----

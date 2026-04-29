@@ -8,6 +8,7 @@ import secrets
 import hashlib
 import os
 import random
+import logging
 from typing import Dict, Any, Optional
 
 from backend.utils.emailer import send_email
@@ -122,9 +123,8 @@ async def forgot_password(req: ForgotReq, bg: BackgroundTasks):
     if user:
         raw = _store_token(email)
         link = _make_reset_link(raw)
-        # DEV aid (logs). Avoid printing in prod.
         if DEV_MODE:
-            print("RESET LINK:", link)
+            logging.info("RESET LINK (dev only): %s", link)
 
         html = f"""
         <h3>Password reset</h3>
@@ -133,11 +133,6 @@ async def forgot_password(req: ForgotReq, bg: BackgroundTasks):
         """
         bg.add_task(send_email, email, "Reset your JobFlowAI password", html)
 
-        # In dev/local, also return token to speed testing.
-        if DEV_MODE:
-            return {"message": "If this email exists, a reset link has been sent.", "dev_token": raw}
-
-    # Generic response either way
     return {"message": "If this email exists, a reset link has been sent."}
 
 @router.post("/reset-password")
@@ -187,7 +182,7 @@ async def forgot_otp(req: ForgotOtpIn, bg: BackgroundTasks):
     if user:
         code = _issue_otp(email)
         if DEV_MODE:
-            print(f"OTP for {email} = {code}")  # DEV aid
+            logging.info("OTP for %s (dev only): %s", email, code)
 
         html = f"""
         <h3>Your JobFlowAI verification code</h3>
@@ -196,9 +191,6 @@ async def forgot_otp(req: ForgotOtpIn, bg: BackgroundTasks):
         <p>This code expires in {OTP_TTL_MIN} minutes.</p>
         """
         bg.add_task(send_email, email, "Your JobFlowAI password reset code", html)
-
-        if DEV_MODE:
-            return {"message": "If this email exists, a 6-digit code has been sent.", "dev_code": code}
 
     return {"message": "If this email exists, a 6-digit code has been sent."}
 

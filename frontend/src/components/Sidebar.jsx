@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, LogOut } from "lucide-react";
+import api from "../lib/api";
 
 const Sidebar = () => {
   const navigate = useNavigate();
@@ -13,19 +14,10 @@ const Sidebar = () => {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/profile/me", {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setProfile(data);
-        }
-      } catch (err) {
-        console.error("❌ Failed to load profile:", err);
+        const { data } = await api.get("/api/v1/profile/me");
+        setProfile(data);
+      } catch {
+        // Silently ignore — sidebar avatar is non-critical
       }
     };
     fetchProfile();
@@ -50,6 +42,8 @@ const Sidebar = () => {
   const handleLogout = () => {
     if (window.confirm("Sign out of JobFlowAI?")) {
       localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("token_type");
       navigate("/login");
     }
     setMenuOpen(false);

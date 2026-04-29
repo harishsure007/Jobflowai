@@ -149,7 +149,7 @@ const DashboardPage = () => {
         u.searchParams.set("q", JOB_QUERY);
         u.searchParams.set("location", JOB_LOCATION);
         u.searchParams.set("page", "1");
-        u.searchParams.set("page_size", String(PAGE_SIZE));
+        u.searchParams.set("per_page", String(PAGE_SIZE));
         const res = await fetch(u.toString());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -197,7 +197,7 @@ const DashboardPage = () => {
         u.searchParams.set("q", JOB_QUERY);
         u.searchParams.set("location", JOB_LOCATION);
         u.searchParams.set("page", "1");
-        u.searchParams.set("page_size", "200");
+        u.searchParams.set("per_page", "200");
         u.searchParams.set("days", "30");
         u.searchParams.set("sort", "date_desc");
         const res = await fetch(u.toString());

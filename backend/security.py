@@ -8,7 +8,9 @@ from passlib.context import CryptContext
 logger = logging.getLogger(__name__)
 
 # Standardized JWT secret handling (used across all auth modules)
-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "change-me-in-prod"
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET (or SECRET_KEY) env var is required but not set.")
 JWT_ALG = "HS256"
 JWT_EXPIRE_SECONDS = 60 * 60 * 24  # 24h
 

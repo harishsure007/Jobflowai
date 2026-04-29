@@ -1,14 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
-import axios from "axios";
+import api from "../lib/api";
 import { saveAs } from "file-saver";
 import { Document, Packer, Paragraph, HeadingLevel, TextRun } from "docx";
-
-/** ---- Robust API base (Vite or CRA), always ends up like http://host:port/api/v1 ---- */
-const RAW =
-  (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE)) ||
-  (typeof process !== "undefined" && process.env && (process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_BASE)) ||
-  "http://127.0.0.1:8000";
-const API_BASE = String(RAW).replace(/\/+$/, "") + "/api/v1";
 
 /* -------- file -> text extraction (txt, pdf, docx) -------- */
 async function extractTextFromFile(file) {
@@ -99,7 +92,6 @@ export default function InterviewPrepPage() {
 
   // Follow-ups & Keywords state
   const [followups, setFollowups] = useState([]);
-  theLoadingFix();
   const [loadingFollowups, setLoadingFollowups] = useState(false);
 
   const [keywords, setKeywords] = useState({ matched: [], missing: [], extras: [] });
@@ -110,13 +102,11 @@ export default function InterviewPrepPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function theLoadingFix() {} // no-op; avoids accidental dangling expressions in edits
-
   async function loadSaved() {
     setSavedLoading(true);
     setSavedErr("");
     try {
-      const { data } = await axios.get(`${API_BASE}/feedback/`);
+      const { data } = await api.get("/api/v1/feedback/");
       setSavedList(Array.isArray(data) ? data : []);
     } catch (e) {
       setSavedErr(e?.response?.data?.detail || e?.message || "Failed to load saved feedback.");
@@ -129,7 +119,7 @@ export default function InterviewPrepPage() {
     const yes = window.confirm("Delete this saved feedback?");
     if (!yes) return;
     try {
-      await axios.delete(`${API_BASE}/feedback/${id}`);
+      await api.delete(`/api/v1/feedback/${id}`);
       setSavedList((prev) => prev.filter((r) => r.id !== id));
       if (openRowId === id) setOpenRowId(null);
     } catch (e) {
@@ -174,10 +164,9 @@ export default function InterviewPrepPage() {
 
     setLoadingQs(true);
     try {
-      const { data } = await axios.post(`${API_BASE}/generate-questions`, {
+      const { data } = await api.post("/api/v1/generate-questions", {
         role: role || "Candidate",
-        experience: "2 years",
-        focus: questionType, // "technical" | "behavioral" | "system design"
+        focus: questionType,
         count: 10,
       });
       const qs = Array.isArray(data?.questions) ? data.questions : [];
@@ -208,7 +197,7 @@ export default function InterviewPrepPage() {
 
     setLoadingDraft(true);
     try {
-      const { data } = await axios.post(`${API_BASE}/generate-answer`, {
+      const { data } = await api.post("/api/v1/generate-answer", {
         resume_text: resumeText,
         jd_text: jdText,
         role: role || "Candidate",
@@ -217,7 +206,6 @@ export default function InterviewPrepPage() {
       });
       setAnswer(data?.answer || "");
     } catch (error) {
-      console.error("Error generating answer:", error);
       setErrorMsg(error?.response?.data?.detail || error?.message || "Could not generate answer.");
     } finally {
       setLoadingDraft(false);
@@ -241,10 +229,10 @@ export default function InterviewPrepPage() {
 
     setLoadingFeedback(true);
     try {
-      const { data } = await axios.post(`${API_BASE}/feedback/interview-answer`, {
+      const { data } = await api.post("/api/v1/feedback/interview-answer", {
         question: q,
         answer,
-        style: "STAR", // keeping backend scoring style; UI scaffold removed
+        style: "STAR",
         role: role || "Candidate",
         resume_text: resumeText || undefined,
         jd_text: jdText || undefined,
@@ -255,7 +243,6 @@ export default function InterviewPrepPage() {
       await loadSaved();
       if (data?.saved_id) setOpenRowId(data.saved_id);
     } catch (error) {
-      console.error("Error getting feedback:", error);
       setErrorMsg(error?.response?.data?.detail || error?.message || "Failed to get feedback.");
     } finally {
       setLoadingFeedback(false);
@@ -310,8 +297,7 @@ export default function InterviewPrepPage() {
     setErrorMsg("");
     setAnalyzing(true);
     try {
-      const url = `${API_BASE}/enhance/keywords`;
-      const { data } = await axios.post(url, {
+      const { data } = await api.post("/api/v1/enhance/keywords", {
         resume_text: resumeText,
         jd_text: jdText,
       });
@@ -343,7 +329,7 @@ export default function InterviewPrepPage() {
     setErrorMsg("");
     setLoadingFollowups(true);
     try {
-      const { data } = await axios.post(`${API_BASE}/generate-followups`, {
+      const { data } = await api.post("/api/v1/generate-followups", {
         question: q,
         answer,
         role: role || "Candidate",

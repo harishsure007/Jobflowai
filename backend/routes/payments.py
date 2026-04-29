@@ -1,9 +1,14 @@
 # backend/routes/payments.py
+import logging
+import traceback
+import os
+
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
-import os
-import stripe
+
+log = logging.getLogger(__name__)
 
 from backend.deps import get_db, get_current_user
 from backend.models import User
@@ -93,29 +98,28 @@ def create_checkout_session(
         cid = ensure_customer(user)
         db.add(user); db.commit(); db.refresh(user)
 
-        print(f"[checkout] user_id={user.id} plan={plan} price_id={price_id} customer={cid}")
+        log.info("[checkout] user_id=%s plan=%s price_id=%s customer=%s", user.id, plan, price_id, cid)
 
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=cid,
             line_items=[{"price": price_id, "quantity": 1}],
-            payment_method_types=["card"],  # keep card-only (simple in test)
+            payment_method_types=["card"],
             allow_promotion_codes=True,
-            # 👇 match your BillingPage.tsx which reads ?status=...
             success_url=f"{APP_BASE}/billing?status=success&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{APP_BASE}/billing?status=cancelled",
             metadata={"user_id": str(user.id), "plan": plan},
         )
-        print("[checkout] created session:", session.id)
+        log.info("[checkout] created session: %s", session.id)
         return {"url": session.url}
 
     except stripe.error.StripeError as e:
         msg = getattr(e, "user_message", None) or str(e)
-        print("StripeError (checkout):", msg)
+        log.warning("StripeError (checkout): %s", msg)
         raise HTTPException(status_code=400, detail=f"Stripe error: {msg}")
 
     except Exception:
-        import traceback; traceback.print_exc()
+        log.exception("Server error creating checkout session")
         raise HTTPException(status_code=500, detail="Server error creating checkout session")
 
 @router.get("/portal")
@@ -142,11 +146,11 @@ def billing_portal(
 
     except stripe.error.StripeError as e:
         msg = getattr(e, "user_message", None) or str(e)
-        print("StripeError (portal):", msg)
+        log.warning("StripeError (portal): %s", msg)
         raise HTTPException(status_code=400, detail=f"Stripe error: {msg}")
 
     except Exception:
-        import traceback; traceback.print_exc()
+        log.exception("Server error creating billing portal session")
         raise HTTPException(status_code=500, detail="Server error creating billing portal session")
 
 @router.post("/webhook")
@@ -164,24 +168,24 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         event = stripe.Webhook.construct_event(payload, sig, WEBHOOK_SECRET)
     except stripe.error.SignatureVerificationError as e:
-        print(f"[webhook] Signature verification failed: {e}")
+        log.warning("[webhook] Signature verification failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Invalid signature: {e}")
     except Exception as e:
-        print(f"[webhook] Webhook error: {e}")
+        log.exception("[webhook] Webhook error")
         raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
 
     etype = event["type"]
     obj = event["data"]["object"]
-    print("Webhook:", etype)
+    log.info("Webhook: %s", etype)
 
     def sync_user_from_subscription(sub: dict):
         cust = sub.get("customer")
         user = db.query(User).filter(User.stripe_customer_id == cust).first()
         if not user:
-            print("[webhook] no local user for customer", cust)
+            log.warning("[webhook] no local user for customer %s", cust)
             return
         _apply_subscription_to_user(user, sub, db)
-        print(f"[webhook] synced user_id={user.id} status={user.subscription_status} plan={user.plan_key}")
+        log.info("[webhook] synced user_id=%s status=%s plan=%s", user.id, user.subscription_status, user.plan_key)
 
     if etype in {"customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"}:
         sync_user_from_subscription(obj)

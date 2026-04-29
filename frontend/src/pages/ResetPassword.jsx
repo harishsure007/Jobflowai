@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 
-// CRA env var
-const API = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:8000";
+const API =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
+  "http://127.0.0.1:8000";
 
 export default function ResetPassword() {
   const [params] = useSearchParams();

@@ -34,4 +34,4 @@ class OpenAIClient:
 
         except Exception as e:
             logging.exception(f"❌ OpenAI client error: {e}")
-            return "Error: Failed to generate response."
+            raise

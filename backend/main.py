@@ -177,16 +177,11 @@ def health():
 def root():
     return {"name": "JobFlowAI API", "version": "1.0.0"}
 
-# -----------
-# Debug prints on startup
-# -----------
-print("ENV =", ENV)
-print("AUTO_MIGRATE =", AUTO_MIGRATE)
-print("ALLOWED_ORIGINS =", ALLOWED_ORIGINS)
-print("RAPIDAPI_KEY present?", bool(os.getenv("RAPIDAPI_KEY")))
-print("JSEARCH host/path =", os.getenv("JSEARCH_RAPIDAPI_HOST"), os.getenv("JSEARCH_RAPIDAPI_PATH"))
-print(
-    "Stripe keys present?",
+log = logging.getLogger(__name__)
+log.info("ENV=%s AUTO_MIGRATE=%s", ENV, AUTO_MIGRATE)
+log.info("RAPIDAPI_KEY present: %s", bool(os.getenv("RAPIDAPI_KEY")))
+log.info(
+    "Stripe keys present: sk=%s month=%s year=%s webhook=%s",
     bool(os.getenv("STRIPE_SECRET_KEY")),
     bool(os.getenv("STRIPE_PRICE_PRO_MONTH")),
     bool(os.getenv("STRIPE_PRICE_PRO_YEAR")),
@@ -195,12 +190,10 @@ print(
 
 @app.on_event("startup")
 async def list_routes():
-    print("\n=== ROUTES ===")
     for r in app.routes:
         if isinstance(r, APIRoute):
             methods = ",".join(sorted(r.methods))
             mod = getattr(r.endpoint, "__module__", "?")
             fn  = getattr(r.endpoint, "__name__", "?")
-            print(f"{methods:10s} {r.path:35s}  ->  {mod}.{fn}")
-    print("==============\n")
+            log.info("ROUTE %-10s %-35s -> %s.%s", methods, r.path, mod, fn)
          

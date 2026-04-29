@@ -37,7 +37,7 @@ export default function RightJobsWidgets({
         u.searchParams.set("q", query);
         u.searchParams.set("location", location);
         u.searchParams.set("page", "1");
-        u.searchParams.set("page_size", String(pageSize));
+        u.searchParams.set("per_page", String(pageSize));
 
         const res = await fetch(u.toString());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
